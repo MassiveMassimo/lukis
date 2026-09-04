@@ -1,0 +1,15 @@
+.DS_Store
+.env
+.env.*
+.next/
+.vercel/
+dist/
+node_modules/
+out/
+test-results/
+
+*.log
+*.pem
+*.tsbuildinfo
+analysis-output/
+playwright-report/

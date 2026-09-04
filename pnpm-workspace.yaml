@@ -1,0 +1,8 @@
+minimumReleaseAge: 10080
+engineStrict: true
+ignoreScripts: true
+saveExact: true
+verifyDepsBeforeRun: error
+
+minimumReleaseAgeExclude:
+  - "@MassiveMassimo/ui"
