@@ -167,7 +167,6 @@ canvas {
   width: 90px;
   height: 68px;
   opacity: 0.32;
-  mask-image: linear-gradient(to bottom, black 0%, black 30%, transparent 68%);
   transform: translateX(-50%) rotate(-7deg);
 }
 .outgoing-bounds {
