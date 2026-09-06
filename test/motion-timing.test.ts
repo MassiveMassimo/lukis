@@ -1,49 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getTransitionDuration, getRevealDelay } from "../lib/motion-timing.ts";
+import { getTransitionDuration, getRevealTiming } from "../lib/motion-timing.ts";
 
-test("reveal delay follows the configured percentage of an easing transition", () => {
-  const transition = {
-    type: "easing",
-    duration: 0.4,
-    ease: [0.22, 1, 0.36, 1],
-  };
-
-  assert.equal(getTransitionDuration(transition), 0.4);
-  assert.equal(getRevealDelay(transition, 70), 280);
+test("reveal duration places its start before the shared bounds ending", () => {
+  const timing = getRevealTiming(0.8, 0.3);
+  assert.equal(timing.delay, 0.5);
+  assert.equal(timing.duration, 0.3);
+  assert.equal(timing.delay + timing.duration, 0.8);
 });
 
-test("reveal delay follows a time spring visual duration", () => {
-  const transition = {
-    type: "spring",
-    visualDuration: 0.5,
-    bounce: 0.2,
-  };
-
-  assert.equal(getTransitionDuration(transition), 0.5);
-  assert.equal(getRevealDelay(transition, 70), 350);
+test("a reveal longer than bounds uses the whole bounds timeline", () => {
+  assert.deepEqual(getRevealTiming(0.3, 2), { delay: 0, duration: 0.3 });
+  assert.deepEqual(getRevealTiming(0, 0.3), { delay: 0, duration: 0 });
+  assert.deepEqual(getRevealTiming(0.8, 0), { delay: 0.8, duration: 0 });
 });
 
-test("physics springs receive a finite calculated duration", () => {
-  const transition = {
-    type: "spring",
-    stiffness: 200,
-    damping: 25,
-    mass: 1,
-  };
-
-  const duration = getTransitionDuration(transition);
-
-  assert.ok(duration > 0);
-  assert.ok(duration < 10);
-  assert.equal(getRevealDelay(transition, 70), duration * 700);
+test("reduced motion removes delay and duration", () => {
+  assert.deepEqual(getRevealTiming(0.8, 0.3, true), { delay: 0, duration: 0 });
 });
 
-test("reveal timing is clamped to the bounds animation", () => {
-  const transition = { type: "easing", duration: 0.3 };
-
-  assert.equal(getRevealDelay(transition, -20), 0);
-  assert.equal(getRevealDelay(transition, 120), 300);
-  assert.equal(getRevealDelay(transition, 70, true), 0);
+test("duration resolution supports both DialKit spring modes", () => {
+  assert.equal(getTransitionDuration({ type: "spring", visualDuration: 0.5 }), 0.5);
+  const duration = getTransitionDuration({ type: "spring", stiffness: 200, damping: 25, mass: 1 });
+  assert.ok(duration > 0 && duration < 10);
   assert.equal(getTransitionDuration({ type: "easing", duration: 0 }), 0);
 });

@@ -1,5 +1,6 @@
 /* oxlint-disable jsx-a11y/prefer-tag-over-role */
 
+import { play } from "cuelume";
 import { animate, motion, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import type { AnimationPlaybackControls } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -19,7 +20,7 @@ export interface ElasticSliderProps {
 const CLICK_THRESHOLD = 3;
 const DEAD_ZONE = 32;
 const MAX_CURSOR_RANGE = 200;
-const MAX_STRETCH = 8;
+export const SLIDER_MAX_STRETCH = 8;
 const HANDLE_BUFFER = 8;
 const LABEL_OFFSET = 16;
 const VALUE_OFFSET = 4;
@@ -78,11 +79,13 @@ export function ElasticSlider({
   const labelRef = useRef<HTMLSpanElement>(null);
   const valueRef = useRef<HTMLSpanElement>(null);
   const pointerDownPosition = useRef<{ x: number; y: number } | null>(null);
+  const activePointerId = useRef<number | null>(null);
   const isClick = useRef(true);
   const animation = useRef<AnimationPlaybackControls | null>(null);
   const wrapperRect = useRef<DOMRect | null>(null);
   const scale = useRef(1);
   const pendingPointerFocus = useRef(false);
+  const lastTickTime = useRef(-Infinity);
   const [isInteracting, setIsInteracting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
@@ -125,6 +128,17 @@ export function ElasticSlider({
     return ((nextValue - min) / (max - min)) * 100;
   }
 
+  function updateValue(nextValue: number, throttleSound = false): void {
+    if (nextValue === value) return;
+    onValueChange(nextValue);
+
+    const now = performance.now();
+    if (!throttleSound || now - lastTickTime.current >= 75) {
+      play("tick", { volume: 0.75 });
+      lastTickTime.current = now;
+    }
+  }
+
   function animateFillTo(targetPercent: number): void {
     animation.current?.stop();
 
@@ -152,14 +166,15 @@ export function ElasticSlider({
     const distancePast = sign < 0 ? rect.left - clientX : clientX - rect.right;
     const overflow = Math.max(0, distancePast - DEAD_ZONE);
 
-    return sign * MAX_STRETCH * Math.sqrt(Math.min(overflow / MAX_CURSOR_RANGE, 1));
+    return sign * SLIDER_MAX_STRETCH * Math.sqrt(Math.min(overflow / MAX_CURSOR_RANGE, 1));
   }
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>): void {
-    if (disabled) return;
+    if (disabled || activePointerId.current !== null || event.button !== 0) return;
 
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
+    activePointerId.current = event.pointerId;
     pointerDownPosition.current = {
       x: event.clientX,
       y: event.clientY,
@@ -182,7 +197,7 @@ export function ElasticSlider({
   }
 
   function handlePointerMove(event: PointerEvent<HTMLDivElement>): void {
-    if (!isInteracting || !pointerDownPosition.current) return;
+    if (event.pointerId !== activePointerId.current || !pointerDownPosition.current) return;
 
     const deltaX = event.clientX - pointerDownPosition.current.x;
     const deltaY = event.clientY - pointerDownPosition.current.y;
@@ -207,7 +222,7 @@ export function ElasticSlider({
     animation.current?.stop();
     animation.current = null;
     fillPercent.jump(percentFromValue(nextValue));
-    onValueChange(roundValue(nextValue, step));
+    updateValue(roundValue(nextValue, step), true);
   }
 
   function finishInteraction(): void {
@@ -224,17 +239,18 @@ export function ElasticSlider({
     setIsInteracting(false);
     setIsDragging(false);
     pointerDownPosition.current = null;
+    activePointerId.current = null;
   }
 
   function handlePointerUp(event: PointerEvent<HTMLDivElement>): void {
-    if (!isInteracting) return;
+    if (event.pointerId !== activePointerId.current) return;
 
     if (isClick.current) {
       const rawValue = positionToValue(event.clientX);
       const snapped = snapPointerValue(rawValue, min, max, step);
 
       animateFillTo(percentFromValue(snapped));
-      onValueChange(roundValue(snapped, step));
+      updateValue(roundValue(snapped, step));
     }
 
     finishInteraction();
@@ -268,8 +284,10 @@ export function ElasticSlider({
     event.preventDefault();
     setKeyboardFocusRing(true);
     const snapped = roundValue(clamp(nextValue, min, max), step);
-    animateFillTo(percentFromValue(snapped));
-    onValueChange(snapped);
+    animation.current?.stop();
+    animation.current = null;
+    fillPercent.jump(percentFromValue(snapped));
+    updateValue(snapped, event.repeat);
   }
 
   useLayoutEffect(() => {
@@ -300,9 +318,8 @@ export function ElasticSlider({
     if (labelRef.current) observer.observe(labelRef.current);
     if (valueRef.current) observer.observe(valueRef.current);
     return () => observer.disconnect();
-    // Text changes alter the measured collision bounds.
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies
-  }, [displayValue, label]);
+    // The observer also catches text-width changes and font loading.
+  }, []);
 
   const valueDodgesText = percentage < dodge.left || percentage > dodge.right;
   const handleOpacity = getHandleOpacity(isActive, valueDodgesText, isDragging);
@@ -310,12 +327,13 @@ export function ElasticSlider({
   const hashMarkCount = discreteSteps <= 10 ? discreteSteps - 1 : 9;
 
   return (
-    <div ref={wrapperRef} className="elastic-slider">
+    <div ref={wrapperRef} className="elastic-slider relative h-9 min-w-0">
       <motion.div
         ref={trackRef}
         role="slider"
         tabIndex={disabled ? -1 : 0}
         data-slot="elastic-slider-track"
+        className="group/slider absolute inset-0 cursor-pointer touch-none overflow-hidden rounded-(--control-radius) bg-muted outline-none select-none data-[disabled=true]:cursor-not-allowed data-[disabled=true]:opacity-50 data-[focus-visible=true]:outline-2 data-[focus-visible=true]:outline-offset-2 data-[focus-visible=true]:outline-(--focus-ring)"
         data-active={isActive || undefined}
         data-disabled={disabled || undefined}
         data-focus-visible={keyboardFocusRing || undefined}
@@ -330,7 +348,12 @@ export function ElasticSlider({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerCancel={finishInteraction}
+        onPointerCancel={(event) => {
+          if (event.pointerId === activePointerId.current) finishInteraction();
+        }}
+        onLostPointerCapture={(event) => {
+          if (event.pointerId === activePointerId.current) finishInteraction();
+        }}
         onFocus={() => {
           if (!pendingPointerFocus.current) setKeyboardFocusRing(true);
         }}
@@ -339,11 +362,15 @@ export function ElasticSlider({
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
-        <span data-slot="elastic-slider-hash-marks" aria-hidden="true">
+        <span
+          className="pointer-events-none absolute inset-0"
+          data-slot="elastic-slider-hash-marks"
+          aria-hidden="true"
+        >
           {Array.from({ length: hashMarkCount }, (_, index) => (
             <span
               key={index}
-              className="elastic-slider-hash-mark"
+              className="pointer-events-none absolute top-1/2 h-2 w-px -translate-x-1/2 -translate-y-1/2 rounded-full bg-transparent transition-[background-color] duration-200 ease-[ease] group-data-[active=true]/slider:bg-[color-mix(in_srgb,var(--muted-foreground)_30%,transparent)]"
               style={{
                 left: `${
                   discreteSteps <= 10
@@ -357,12 +384,14 @@ export function ElasticSlider({
 
         <motion.span
           data-slot="elastic-slider-fill"
+          className="pointer-events-none absolute inset-y-0 left-0 bg-[color-mix(in_srgb,var(--muted-foreground)_10%,transparent)] transition-[background-color] duration-200 ease-[ease] group-data-[active=true]/slider:bg-[color-mix(in_srgb,var(--muted-foreground)_20%,transparent)]"
           aria-hidden="true"
           style={{ width: fillWidth }}
         />
 
         <motion.span
           data-slot="elastic-slider-handle"
+          className="pointer-events-none absolute top-1/2 h-5 w-1 rounded-full bg-foreground"
           aria-hidden="true"
           style={{ left: handleLeft, y: "-50%" }}
           animate={{
@@ -389,10 +418,20 @@ export function ElasticSlider({
           }
         />
 
-        <span ref={labelRef} data-slot="elastic-slider-label" aria-hidden="true">
+        <span
+          className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[0.8125rem] leading-none font-medium text-muted-foreground transition-[color] duration-200 ease-[ease]"
+          ref={labelRef}
+          data-slot="elastic-slider-label"
+          aria-hidden="true"
+        >
           {label}
         </span>
-        <span ref={valueRef} data-slot="elastic-slider-value" aria-hidden="true">
+        <span
+          className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-[0.8125rem] leading-none font-medium text-muted-foreground tabular-nums transition-[color] duration-200 ease-[ease] group-data-[active=true]/slider:text-foreground"
+          ref={valueRef}
+          data-slot="elastic-slider-value"
+          aria-hidden="true"
+        >
           {displayValue}
         </span>
       </motion.div>

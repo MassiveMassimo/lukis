@@ -51,12 +51,12 @@ export function getTransitionDuration(
   return MAX_SPRING_DURATION_MS / 1000;
 }
 
-export function getRevealDelay(
-  transition: MotionTimingTransition | null | undefined,
-  startAt: number,
+export function getRevealTiming(
+  boundsDuration: number,
+  revealDuration: number,
   shouldReduceMotion = false,
 ) {
-  if (shouldReduceMotion) return 0;
-  const clampedStartAt = Math.min(100, Math.max(0, startAt));
-  return getTransitionDuration(transition) * clampedStartAt * 10;
+  if (shouldReduceMotion) return { delay: 0, duration: 0 };
+  const duration = Math.min(boundsDuration, revealDuration);
+  return { delay: boundsDuration - duration, duration };
 }

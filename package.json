@@ -24,6 +24,7 @@
   "dependencies": {
     "@MassiveMassimo/ui": "0.1.0-beta.45",
     "@tabler/icons-react": "3.41.1",
+    "cuelume": "0.2.2",
     "dialkit": "1.4.3",
     "motion": "12.43.0",
     "next": "16.3.3",

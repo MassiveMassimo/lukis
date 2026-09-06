@@ -40,6 +40,12 @@ interface MarkerSample {
   overlap: boolean;
 }
 
+interface RevealCenterSample {
+  frameMask: string;
+  imageMask: string;
+  revealTransform: string;
+}
+
 function reservePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const socket = createServer();
@@ -68,6 +74,7 @@ async function createIsolatedRoot(): Promise<string> {
     "lib",
     "public",
     "next-env.d.ts",
+    "next.config.ts",
     "package.json",
     "postcss.config.mjs",
     "tsconfig.json",
@@ -192,7 +199,8 @@ async function createCirclePng(page: Page, width: number, height: number): Promi
       context.arc(
         fixtureWidth / 2,
         fixtureHeight / 2,
-        Math.min(fixtureWidth, fixtureHeight) * 0.12,
+        // Keep the marker inside the crop while the image covers wide, shallow bounds.
+        Math.min(fixtureWidth, fixtureHeight) * 0.1,
         0,
         Math.PI * 2,
       );
@@ -227,9 +235,9 @@ async function captureBoundsRevealFrames(
 
     function updateBeacon() {
       const frame = document.querySelector(".canvas-frame");
-      const surface = document.querySelector(".canvas-surface");
-      if (frame instanceof HTMLElement && surface instanceof HTMLElement) {
-        const opacity = Number.parseFloat(getComputedStyle(surface).opacity);
+      const reveal = document.querySelector(".canvas-clip");
+      if (frame instanceof HTMLElement && reveal instanceof HTMLElement) {
+        const opacity = Number.parseFloat(getComputedStyle(reveal).opacity);
         const isOverlap =
           frame.dataset.hasFile === "true" &&
           getComputedStyle(frame).transform !== "none" &&
@@ -261,16 +269,16 @@ async function captureBoundsRevealFrames(
     ({ height, width }) => {
       const canvas = document.querySelector("canvas");
       const frame = document.querySelector(".canvas-frame");
-      const surface = document.querySelector(".canvas-surface");
+      const reveal = document.querySelector(".canvas-clip");
       return (
         canvas instanceof HTMLCanvasElement &&
         frame instanceof HTMLElement &&
-        surface instanceof HTMLElement &&
+        reveal instanceof HTMLElement &&
         canvas.width === width &&
         canvas.height === height &&
         frame.dataset.hasFile === "true" &&
         getComputedStyle(frame).transform === "none" &&
-        Number.parseFloat(getComputedStyle(surface).opacity) >= 0.999
+        Number.parseFloat(getComputedStyle(reveal).opacity) >= 0.999
       );
     },
     expected,
@@ -282,6 +290,11 @@ async function captureBoundsRevealFrames(
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
       }),
   );
+  const finalFrame = await client.send("Page.captureScreenshot", {
+    clip: { height: 960, scale: 0.5, width: 1280, x: 0, y: 0 },
+    format: "png",
+  });
+  frames.push(finalFrame.data);
   await client.send("Page.stopScreencast");
 
   return page.evaluate(async (encodedFrames) => {
@@ -304,13 +317,13 @@ async function captureBoundsRevealFrames(
       const pixels = context.getImageData(0, 0, sample.width, sample.height).data;
       let beaconPixels = 0;
       let count = 0;
-      let maximumX = 0;
-      let maximumY = 0;
-      let minimumX = sample.width;
-      let minimumY = sample.height;
+      let sumX = 0;
+      let sumXSquare = 0;
+      let sumY = 0;
+      let sumYSquare = 0;
 
-      for (let y = 0; y < sample.height; y += 2) {
-        for (let x = 0; x < sample.width; x += 2) {
+      for (let y = 0; y < sample.height; y += 1) {
+        for (let x = 0; x < sample.width; x += 1) {
           const offset = (y * sample.width + x) * 4;
           const red = pixels[offset] ?? 0;
           const green = pixels[offset + 1] ?? 0;
@@ -321,16 +334,16 @@ async function captureBoundsRevealFrames(
           if (red <= 32 || red - Math.max(green, blue) <= 16) continue;
 
           count += 1;
-          minimumX = Math.min(minimumX, x);
-          maximumX = Math.max(maximumX, x);
-          minimumY = Math.min(minimumY, y);
-          maximumY = Math.max(maximumY, y);
+          sumX += x;
+          sumXSquare += x * x;
+          sumY += y;
+          sumYSquare += y * y;
         }
       }
 
       if (count < 25) continue;
-      const markerHeight = maximumY - minimumY + 2;
-      const markerWidth = maximumX - minimumX + 2;
+      const markerWidth = Math.sqrt(sumXSquare / count - (sumX / count) ** 2);
+      const markerHeight = Math.sqrt(sumYSquare / count - (sumY / count) ** 2);
       samples.push({
         markerHeight,
         markerRatio: markerWidth / markerHeight,
@@ -343,6 +356,58 @@ async function captureBoundsRevealFrames(
   }, frames);
 }
 
+async function captureRevealCenterSamples(
+  page: Page,
+  expected: ImageExpectation,
+  upload: () => Promise<void>,
+): Promise<RevealCenterSample[]> {
+  await page.evaluate(() => {
+    const browserWindow = window as typeof window & {
+      revealCenterSamples: RevealCenterSample[];
+    };
+    browserWindow.revealCenterSamples = [];
+
+    function sampleRevealCenter() {
+      const frame = document.querySelector(".canvas-frame");
+      const clip = document.querySelector(".canvas-clip");
+      const surface = document.querySelector(".canvas-surface");
+
+      if (
+        frame instanceof HTMLElement &&
+        clip instanceof HTMLElement &&
+        surface instanceof HTMLElement &&
+        frame.dataset.hasFile === "true"
+      ) {
+        const clipStyle = getComputedStyle(clip);
+        const opacity = Number.parseFloat(clipStyle.opacity);
+        if (opacity > 0.01 && opacity < 0.999) {
+          browserWindow.revealCenterSamples.push({
+            frameMask: getComputedStyle(frame).maskImage,
+            imageMask: getComputedStyle(surface).maskImage,
+            revealTransform: clipStyle.transform,
+          });
+        }
+      }
+
+      requestAnimationFrame(sampleRevealCenter);
+    }
+
+    requestAnimationFrame(sampleRevealCenter);
+  });
+
+  await upload();
+  await waitForProcessedImage(page, expected);
+
+  return page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          revealCenterSamples?: RevealCenterSample[];
+        }
+      ).revealCenterSamples ?? [],
+  );
+}
+
 function getBrowser(): Browser {
   if (!browser) throw new Error("The browser did not start.");
   return browser;
@@ -353,8 +418,8 @@ async function waitForProcessedImage(page: Page, expected: ImageExpectation): Pr
     ({ height, width }) => {
       const canvas = document.querySelector("canvas");
       const clip = document.querySelector(".canvas-clip");
-      const surface = document.querySelector(".canvas-surface");
-      if (!(canvas instanceof HTMLCanvasElement) || !(surface instanceof HTMLElement)) {
+      const reveal = clip;
+      if (!(canvas instanceof HTMLCanvasElement) || !(reveal instanceof HTMLElement)) {
         return false;
       }
 
@@ -362,7 +427,8 @@ async function waitForProcessedImage(page: Page, expected: ImageExpectation): Pr
         canvas.height === height &&
         canvas.width === width &&
         clip?.getAttribute("aria-hidden") === "false" &&
-        Number.parseFloat(getComputedStyle(surface).opacity) >= 0.999
+        getComputedStyle(document.querySelector(".canvas-frame")!).transform === "none" &&
+        Number.parseFloat(getComputedStyle(reveal).opacity) >= 0.999
       );
     },
     expected,
@@ -374,31 +440,31 @@ async function assertImageGeometry(page: Page, expected: ImageExpectation): Prom
   const geometry = await page.evaluate(() => {
     const frame = document.querySelector(".canvas-frame");
     const canvas = document.querySelector("canvas");
-    const surface = document.querySelector(".canvas-surface");
+    const reveal = document.querySelector(".canvas-clip");
 
     if (
       !(frame instanceof HTMLElement) ||
       !(canvas instanceof HTMLCanvasElement) ||
-      !(surface instanceof HTMLElement)
+      !(reveal instanceof HTMLElement)
     ) {
       throw new Error("The processed image geometry is incomplete.");
     }
 
     const frameRect = frame.getBoundingClientRect();
     const canvasRect = canvas.getBoundingClientRect();
-    const surfaceStyle = getComputedStyle(surface);
+    const revealStyle = getComputedStyle(reveal);
 
     return {
       canvasHeight: canvas.height,
       canvasRatio: canvasRect.width / canvasRect.height,
       canvasWidth: canvas.width,
-      edgeFade: surfaceStyle.getPropertyValue("--edge-fade").trim(),
       frameRatio: frameRect.width / frameRect.height,
-      clipPath: surfaceStyle.clipPath,
-      maskImage: surfaceStyle.maskImage,
+      clipPath: revealStyle.clipPath,
+      maskImage: getComputedStyle(frame).maskImage,
+      outerMask: revealStyle.maskImage,
+      outerFilter: revealStyle.filter,
+      imageFilter: getComputedStyle(canvas.parentElement!).filter,
       objectFit: getComputedStyle(canvas).objectFit,
-      revealX: surfaceStyle.getPropertyValue("--reveal-x").trim(),
-      revealY: surfaceStyle.getPropertyValue("--reveal-y").trim(),
     };
   });
   const expectedRatio = expected.width / expected.height;
@@ -409,10 +475,10 @@ async function assertImageGeometry(page: Page, expected: ImageExpectation): Prom
   assert.ok(Math.abs(geometry.canvasRatio - expectedRatio) < 0.01);
   assert.equal(geometry.objectFit, "cover");
   assert.ok(geometry.clipPath === "none" || geometry.clipPath === "");
-  assert.notEqual(geometry.maskImage, "none");
-  assert.equal(geometry.revealX, "0%");
-  assert.equal(geometry.revealY, "0%");
-  assert.equal(geometry.edgeFade, "0%");
+  assert.equal(geometry.outerMask, "none");
+  assert.equal(geometry.outerFilter, "none");
+  assert.equal(geometry.imageFilter, "blur(0px)");
+  assert.equal(geometry.maskImage, "none");
 }
 
 async function assertGuidesMatchFrame(page: Page): Promise<void> {
@@ -634,7 +700,7 @@ test("keeps a 1448 by 1086 landscape image undistorted", async () => {
   }
 });
 
-test("keeps rendered pixels undistorted during the bounds and reveal overlap", async () => {
+test("keeps underlying image pixels undistorted during the bounds and reveal overlap", async () => {
   const context = await getBrowser().newContext({
     reducedMotion: "no-preference",
     viewport: { width: 1280, height: 960 },
@@ -689,7 +755,10 @@ test("keeps rendered pixels undistorted during the bounds and reveal overlap", a
       overlapSamples.every(
         ({ markerRatio }) => Math.abs(markerRatio / finalSample.markerRatio - 1) < 0.025,
       ),
-      `the rendered circle distorted during overlap: ${JSON.stringify(overlapSamples)}`,
+      `the rendered circle distorted during overlap: ${JSON.stringify({
+        finalSample,
+        overlapSamples,
+      })}`,
     );
     assert.equal(finalSample.overlap, false);
     assert.ok(
@@ -697,6 +766,262 @@ test("keeps rendered pixels undistorted during the bounds and reveal overlap", a
       `the final rendered circle ratio was ${finalSample.markerRatio}`,
     );
     assertNoBrowserErrors(issues);
+  } finally {
+    await context.close();
+  }
+});
+
+test("reveals without a mask or zoom during bounds overlap", async () => {
+  const context = await getBrowser().newContext({
+    reducedMotion: "no-preference",
+    viewport: { width: 1280, height: 960 },
+  });
+  await context.addInitScript(() => {
+    const values = {
+      "bounds.transition": {
+        type: "easing",
+        duration: 1,
+        ease: [1, -0.4, 0.35, 0.95],
+      },
+      "reveal.transition": {
+        type: "easing",
+        duration: 0.3,
+        ease: [0.22, 1, 0.36, 1],
+      },
+    };
+    localStorage.setItem(
+      "dialkit:painterly",
+      JSON.stringify({
+        version: 1,
+        values,
+        baseValues: values,
+        activePresetId: null,
+      }),
+    );
+  });
+  const page = await context.newPage();
+  const issues = watchForBrowserErrors(page);
+
+  try {
+    await page.goto(baseUrl);
+    const expected = { height: 480, width: 360 };
+    const fixture = await createCirclePng(page, expected.width, expected.height);
+    const samples = await captureRevealCenterSamples(page, expected, () =>
+      page.locator('input[type="file"]').setInputFiles({
+        name: "centered-reveal.png",
+        mimeType: "image/png",
+        buffer: fixture,
+      }),
+    );
+
+    assert.ok(samples.length >= 3, `expected reveal samples, received ${samples.length}`);
+    assert.ok(
+      samples.every(
+        ({ frameMask, imageMask, revealTransform }) =>
+          frameMask === "none" && imageMask === "none" && revealTransform === "none",
+      ),
+    );
+    assertNoBrowserErrors(issues);
+  } finally {
+    await context.close();
+  }
+});
+
+for (const scenario of [
+  { name: "linear", ease: [0, 0, 1, 1], reduced: false },
+  { name: "shorter reveal", ease: [0, 0, 1, 1], reduced: false },
+  { name: "late easing", ease: [1, 0.07, 1, 0.37], reduced: false },
+  { name: "reduced motion", ease: [0, 0, 1, 1], reduced: true },
+]) {
+  test(`reveal honors DialKit timing with ${scenario.name}`, async () => {
+    const context = await getBrowser().newContext({
+      reducedMotion: scenario.reduced ? "reduce" : "no-preference",
+      viewport: { width: 800, height: 700 },
+    });
+    await context.addInitScript(({ ease, name }) => {
+      const values = {
+        "bounds.transition": { type: "easing", duration: 2, ease: [0, 0, 1, 1] },
+        "reveal.transition": {
+          type: "easing",
+          duration: name === "shorter reveal" ? 0.6 : 2,
+          ease,
+        },
+      };
+      localStorage.setItem(
+        "dialkit:painterly",
+        JSON.stringify({
+          version: 1,
+          values,
+          baseValues: values,
+          activePresetId: null,
+        }),
+      );
+    }, scenario);
+    const page = await context.newPage();
+    const issues = watchForBrowserErrors(page);
+    try {
+      await page.goto(baseUrl);
+      await page.locator('input[type="file"]').setInputFiles({
+        name: "timing.png",
+        mimeType: "image/png",
+        buffer: await createSplitColorPng(page, 80, 60),
+      });
+      const samples = await page.evaluate(
+        () =>
+          new Promise<
+            {
+              elapsed: number;
+              opacity: number;
+              progress: number;
+              filter: string;
+            }[]
+          >((resolve) => {
+            const frames: {
+              elapsed: number;
+              opacity: number;
+              progress: number;
+              filter: string;
+            }[] = [];
+            let start: number | undefined;
+            function sample(now: number) {
+              const clip = document.querySelector(".canvas-clip");
+              if (clip?.getAttribute("aria-hidden") === "false") {
+                start ??= now;
+                const style = getComputedStyle(clip);
+                const value = {
+                  elapsed: now - start,
+                  opacity: Number(style.opacity),
+                  progress:
+                    1 -
+                    parseFloat(
+                      getComputedStyle(clip.querySelector(".canvas-surface")!).filter.match(
+                        /blur\(([^)]+)\)/,
+                      )?.[1] ?? "0",
+                    ) /
+                      4,
+                  filter: getComputedStyle(clip.querySelector(".canvas-surface")!).filter,
+                };
+                frames.push(value);
+                if ((value.opacity >= 0.999 && value.progress >= 0.999) || value.elapsed > 3000) {
+                  resolve(frames);
+                  return;
+                }
+              }
+              requestAnimationFrame(sample);
+            }
+            requestAnimationFrame(sample);
+          }),
+      );
+      assert.ok(samples.every(({ progress }) => progress >= 0 && progress <= 1));
+      const last = samples.at(-1)!;
+      assert.ok(last.opacity >= 0.999 && last.progress >= 0.999);
+      if (scenario.reduced) {
+        assert.ok(
+          last.elapsed < 250,
+          `reduced fade took ${last.elapsed}ms: ${JSON.stringify(samples)}`,
+        );
+        assert.ok(
+          samples.every(
+            ({ progress, filter }) => Math.abs(progress - 1) < 0.001 && filter === "blur(0px)",
+          ),
+        );
+      } else {
+        assert.ok(last.elapsed > 1700 && last.elapsed < 2600, `2s reveal took ${last.elapsed}ms`);
+        const middle = samples.find(({ elapsed }) => elapsed >= 900)!;
+        assert.ok(middle, "expected an intermediate animation frame");
+        if (scenario.name === "shorter reveal") {
+          assert.equal(middle.opacity, 0);
+          assert.equal(middle.progress, 0);
+          const revealing = samples.find(({ elapsed }) => elapsed >= 1650)!;
+          assert.ok(revealing.opacity > 0 && revealing.opacity < 1);
+          assert.ok(Math.abs(revealing.opacity - revealing.progress) < 0.05);
+        } else if (scenario.name === "linear")
+          assert.ok(middle.opacity > 0.35 && middle.opacity < 0.65);
+        else assert.ok(middle.opacity < 0.3, `late easing was ${middle.opacity} at 900ms`);
+      }
+      assertNoBrowserErrors(issues);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
+test("hidden controls cannot focus and sliders preserve pointer ownership", async () => {
+  const context = await getBrowser().newContext({ reducedMotion: "no-preference" });
+  await context.addInitScript(() => {
+    const values = {
+      "bounds.transition": { type: "easing", duration: 2, ease: [0, 0, 1, 1] },
+    };
+    localStorage.setItem(
+      "dialkit:painterly",
+      JSON.stringify({ version: 1, values, baseValues: values, activePresetId: null }),
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(baseUrl);
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "controls.png",
+      mimeType: "image/png",
+      buffer: await createSplitColorPng(page, 80, 60),
+    });
+    const paint = page.getByRole("slider", { name: "Paint", exact: true, includeHidden: true });
+    await paint.waitFor({ state: "attached" });
+    assert.equal(
+      await paint.evaluate((element) => {
+        (element as HTMLElement).focus();
+        return document.activeElement === element;
+      }),
+      false,
+    );
+    await page.waitForFunction(() => !document.querySelector(".controls")?.hasAttribute("inert"));
+    await paint.focus();
+    await paint.press("Home");
+    assert.equal(await paint.getAttribute("aria-valuenow"), "0");
+    assert.ok(
+      (await paint.evaluate((element) =>
+        parseFloat(
+          getComputedStyle(element.querySelector('[data-slot="elastic-slider-fill"]')!).width,
+        ),
+      )) < 1,
+    );
+    await waitForProcessedImage(page, { width: 80, height: 60 });
+    const rect = (await paint.boundingBox())!;
+    const touch = (id: number, fraction: number) => ({
+      id,
+      x: rect.x + rect.width * fraction,
+      y: rect.y + 10,
+    });
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [touch(1, 0.2)],
+    });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [touch(1, 0.3)] });
+    const firstValue = await paint.getAttribute("aria-valuenow");
+    assert.notEqual(firstValue, "0");
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [touch(1, 0.3), touch(2, 0.8)],
+    });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [touch(1, 0.3), touch(2, 0.9)],
+    });
+    assert.equal(await paint.getAttribute("aria-valuenow"), firstValue);
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [touch(1, 0.5), touch(2, 0.9)],
+    });
+    await page.waitForFunction(
+      (previous) =>
+        document
+          .querySelector('[role="slider"][aria-label="Paint"]')
+          ?.getAttribute("aria-valuenow") !== previous,
+      firstValue,
+    );
+    assert.notEqual(await paint.getAttribute("aria-valuenow"), firstValue);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   } finally {
     await context.close();
   }
@@ -751,6 +1076,453 @@ test("tunes, downloads, and restarts a processed image", async () => {
   }
 });
 
+test("clears the image in half the duration of the returning bounds", async () => {
+  const page = await getBrowser().newPage({
+    reducedMotion: "no-preference",
+    viewport: { width: 1280, height: 960 },
+  });
+  try {
+    await page.goto(baseUrl);
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "portrait.png",
+      mimeType: "image/png",
+      buffer: await createSplitColorPng(page, 64, 128),
+    });
+    await waitForProcessedImage(page, { width: 64, height: 128 });
+    const frames = await page.evaluate(async () => {
+      const frame = document.querySelector<HTMLElement>(".canvas-frame")!;
+      const startWidth = frame.getBoundingClientRect().width;
+      const endWidth = document.querySelector(".preview-stage")!.getBoundingClientRect().width;
+      const samples = [];
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Restart with another image"]')!
+        .click();
+      const start = performance.now();
+      while (performance.now() - start < 3000) {
+        // oxlint-disable-next-line no-await-in-loop
+        await new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+        const progress = Math.max(
+          0,
+          Math.min(1, (frame.getBoundingClientRect().width - startWidth) / (endWidth - startWidth)),
+        );
+        const outgoing = document.querySelector(".outgoing-image")!;
+        const opacity = Number(getComputedStyle(outgoing).opacity);
+        const filter = getComputedStyle(outgoing).filter;
+        samples.push({
+          time: performance.now() - start,
+          progress,
+          opacity,
+          blur: Number(filter.match(/blur\(([\d.]+)px\)/)?.[1] ?? 0),
+          controlsExiting: frame.hasAttribute("data-has-file"),
+        });
+        if (
+          !frame.hasAttribute("data-has-file") &&
+          getComputedStyle(frame).transform === "none" &&
+          opacity === 0
+        )
+          break;
+      }
+      return samples;
+    });
+    assert.ok(
+      frames.some((frame) => frame.controlsExiting),
+      "Observe the controls exit first.",
+    );
+    assert.ok(
+      frames.filter((frame) => frame.controlsExiting).every((frame) => frame.opacity === 1),
+      "Keep the image visible until the bounds begin returning.",
+    );
+    const moving = frames.filter((frame) => frame.opacity > 0.05 && frame.opacity < 0.95);
+    assert.ok(moving.length > 2, "Observe the image fading out.");
+    const boundsStart = frames.find((frame) => !frame.controlsExiting)!.time;
+    const fadeEnd = frames.find((frame) => !frame.controlsExiting && frame.opacity === 0)!.time;
+    const boundsEnd = frames.at(-1)!.time;
+    assert.ok(
+      Math.abs((fadeEnd - boundsStart) / (boundsEnd - boundsStart) - 0.5) < 0.08,
+      "The image exit must take half the bounds duration.",
+    );
+    assert.ok(
+      moving.every((frame) => Math.abs(frame.blur / 4 - (1 - frame.opacity)) < 0.04),
+      "Image blur and opacity must stay synchronized.",
+    );
+    assert.equal(frames.at(-1)?.opacity, 0);
+    await assertUploadStateRestored(page);
+  } finally {
+    await page.close();
+  }
+});
+
+test("ignores a dropped replacement while Restart is exiting", async () => {
+  const page = await getBrowser().newPage({
+    reducedMotion: "no-preference",
+    viewport: { width: 1280, height: 960 },
+  });
+  const issues = watchForBrowserErrors(page);
+
+  try {
+    await page.goto(baseUrl);
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "initial.png",
+      mimeType: "image/png",
+      buffer: await createSplitColorPng(page, 64, 48),
+    });
+    await waitForProcessedImage(page, { height: 48, width: 64 });
+    const replacement = Array.from(await createSplitColorPng(page, 48, 64));
+
+    await page.evaluate((bytes) => {
+      const browserWindow = window as typeof window & {
+        replacementDecodeCount: number;
+      };
+      const originalCreateImageBitmap = window.createImageBitmap;
+      browserWindow.replacementDecodeCount = 0;
+      const trackedCreateImageBitmap = async (...arguments_: unknown[]) => {
+        browserWindow.replacementDecodeCount += 1;
+        return Reflect.apply(originalCreateImageBitmap, window, arguments_) as Promise<ImageBitmap>;
+      };
+      window.createImageBitmap = trackedCreateImageBitmap as typeof window.createImageBitmap;
+
+      const restart = document.querySelector<HTMLButtonElement>(
+        '[aria-label="Restart with another image"]',
+      );
+      const dropzone = document.querySelector(".image-bounds");
+      if (!restart || !dropzone) throw new Error("Restart controls are unavailable.");
+
+      const transfer = new DataTransfer();
+      transfer.items.add(
+        new File([new Uint8Array(bytes)], "replacement.png", {
+          type: "image/png",
+        }),
+      );
+      restart.click();
+      dropzone.dispatchEvent(
+        new DragEvent("drop", {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: transfer,
+        }),
+      );
+    }, replacement);
+
+    await assertUploadStateRestored(page);
+    assert.equal(
+      await page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              replacementDecodeCount: number;
+            }
+          ).replacementDecodeCount,
+      ),
+      0,
+    );
+    assertNoBrowserErrors(issues);
+  } finally {
+    await page.close();
+  }
+});
+
+for (const reducedMotion of ["no-preference", "reduce"] as const) {
+  test(`keeps controls aligned and visible while replacement bounds resize (${reducedMotion})`, async () => {
+    const page = await getBrowser().newPage({
+      reducedMotion,
+      viewport: { width: 1280, height: 960 },
+    });
+    const issues = watchForBrowserErrors(page);
+
+    try {
+      await page.goto(baseUrl);
+      await page.locator('input[type="file"]').setInputFiles({
+        name: "wide.png",
+        mimeType: "image/png",
+        buffer: await createSplitColorPng(page, 128, 64),
+      });
+      await waitForProcessedImage(page, { width: 128, height: 64 });
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll(".control-row, .control-actions")].every(
+          (row) => getComputedStyle(row).opacity === "1",
+        ),
+      );
+
+      const width = 64;
+      const height = 128;
+      const bytes = Array.from(await createSplitColorPng(page, width, height));
+      await page.locator(".image-bounds").dispatchEvent("dragenter");
+      await page.waitForFunction(
+        () => Number(getComputedStyle(document.querySelector(".message-chrome")!).opacity) === 1,
+      );
+      const samples = await page.evaluate(async (png) => {
+        const frames: {
+          time: number;
+          widthError: number;
+          gap: number;
+          opacity: number;
+          width: number;
+          hasUploadInstructions: boolean;
+        }[] = [];
+        const transfer = new DataTransfer();
+        transfer.items.add(
+          new File([new Uint8Array(png)], "replacement.png", { type: "image/png" }),
+        );
+        document
+          .querySelector(".image-bounds")!
+          .dispatchEvent(
+            new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }),
+          );
+        const start = performance.now();
+        let loadedAt: number | undefined;
+        while (performance.now() - start < 6000) {
+          // Sample rendered frames in order, after Motion's frame callbacks.
+          // oxlint-disable-next-line no-await-in-loop
+          await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => setTimeout(resolve, 0));
+          });
+          const frame = document.querySelector(".canvas-frame")!.getBoundingClientRect();
+          const controls = document.querySelector(".controls")!.getBoundingClientRect();
+          frames.push({
+            time: performance.now() - start,
+            widthError: Math.abs(frame.width - controls.width),
+            gap: controls.top - frame.bottom,
+            opacity: Math.min(
+              ...[...document.querySelectorAll(".control-row, .control-actions")].map((row) =>
+                Number(getComputedStyle(row).opacity),
+              ),
+            ),
+            width: controls.width,
+            hasUploadInstructions:
+              document.querySelector("#image-requirements") !== null ||
+              [...document.querySelectorAll("[data-message-text]")].some((text) =>
+                text.textContent?.includes("Drop or browse"),
+              ),
+          });
+          const canvas = document.querySelector("canvas")!;
+          if (loadedAt === undefined && canvas.width === 64 && canvas.height === 128) {
+            loadedAt = performance.now();
+          }
+          if (loadedAt !== undefined && performance.now() - loadedAt >= 1400) break;
+        }
+        if (loadedAt === undefined) throw new Error("The replacement did not finish decoding.");
+        return frames;
+      }, bytes);
+
+      assert.ok(samples.length > 10);
+      assert.ok(
+        samples.every((sample) => !sample.hasUploadInstructions),
+        "Replacement must not flash first-upload instructions during decoding or reveal.",
+      );
+      assert.ok(
+        samples.every((sample) => sample.widthError < 1),
+        `Controls must follow the visible frame width (${reducedMotion}: ${JSON.stringify(samples.filter((sample) => sample.widthError >= 1))}).`,
+      );
+      assert.ok(
+        samples.every((sample) => Math.abs(sample.gap - 32) < 1),
+        `Controls must keep their gap below the moving frame (${reducedMotion}: ${Math.min(...samples.map((sample) => sample.gap))}–${Math.max(...samples.map((sample) => sample.gap))}px).`,
+      );
+      assert.ok(
+        samples.every((sample) => sample.opacity === 1),
+        "Replacement must not replay the controls entrance.",
+      );
+      if (reducedMotion === "no-preference") {
+        assert.ok(
+          new Set(samples.map((sample) => Math.round(sample.width))).size > 10,
+          "The width must pass through intermediate sizes.",
+        );
+      } else {
+        assert.ok(
+          new Set(samples.map((sample) => Math.round(sample.width))).size <= 2,
+          "Reduced motion must switch directly between the old and new widths.",
+        );
+      }
+      await waitForProcessedImage(page, { width, height });
+      assertNoBrowserErrors(issues);
+    } finally {
+      await page.close();
+    }
+  });
+}
+
+for (const [method, reducedMotion] of [
+  ["drop", "no-preference"],
+  ["input", "no-preference"],
+  ["input", "reduce"],
+] as const) {
+  test(`crossfades the outgoing image on ${method} replacement (${reducedMotion})`, async () => {
+    const page = await getBrowser().newPage({
+      reducedMotion,
+      viewport: { width: 1280, height: 960 },
+    });
+    const issues = watchForBrowserErrors(page);
+    try {
+      await page.goto(baseUrl);
+      await page.locator('input[type="file"]').setInputFiles({
+        name: "old.png",
+        mimeType: "image/png",
+        buffer: await createSplitColorPng(page, 128, 64),
+      });
+      await waitForProcessedImage(page, { width: 128, height: 64 });
+      if (method === "drop") {
+        await page.locator(".image-bounds").dispatchEvent("dragenter");
+        await page.waitForFunction(() => {
+          const style = getComputedStyle(document.querySelector(".canvas-surface canvas")!);
+          return Number(style.opacity) === Number(style.getPropertyValue("--monochrome-opacity"));
+        });
+      }
+      const png = Array.from(await createCirclePng(page, 64, 128));
+      const result = await page.evaluate(
+        async ({ bytes, method: uploadMethod }) => {
+          const current = document.querySelector<HTMLCanvasElement>(".canvas-surface canvas")!;
+          const expectedPixels = current.toDataURL();
+          const appearance = getComputedStyle(current);
+          const expected = {
+            opacity: appearance.opacity,
+            filter: appearance.filter,
+            mask: appearance.maskImage,
+          };
+          const transfer = new DataTransfer();
+          transfer.items.add(new File([new Uint8Array(bytes)], "new.png", { type: "image/png" }));
+          // Keep the loading phase observable even on fast machines.
+          const decode = window.createImageBitmap;
+          window.createImageBitmap = (async (...args: unknown[]) => {
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            return Reflect.apply(decode, window, args);
+          }) as typeof window.createImageBitmap;
+          if (uploadMethod === "drop") {
+            document
+              .querySelector(".image-bounds")!
+              .dispatchEvent(
+                new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }),
+              );
+          } else {
+            const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+            input.files = transfer.files;
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          const outgoing = document.querySelector<HTMLCanvasElement>(".outgoing-image canvas")!;
+          const preservedPixels = outgoing.toDataURL() === expectedPixels;
+          const preservedAppearance =
+            outgoing.style.opacity === expected.opacity &&
+            outgoing.style.filter === expected.filter &&
+            outgoing.style.maskImage === expected.mask;
+          const frames = [];
+          const start = performance.now();
+          let loadedAt: number | undefined;
+          while (performance.now() - start < 6000) {
+            // oxlint-disable-next-line no-await-in-loop
+            await new Promise<void>((resolve) =>
+              requestAnimationFrame(() => setTimeout(resolve, 0)),
+            );
+            const old = getComputedStyle(document.querySelector(".outgoing-image")!);
+            const bounds = document.querySelector(".image-bounds")!.getBoundingClientRect();
+            const overlay = document.querySelector(".outgoing-bounds")!.getBoundingClientRect();
+            frames.push({
+              oldOpacity: Number(old.opacity),
+              blur: Number(old.filter.match(/blur\(([\d.]+)px\)/)?.[1] ?? 0),
+              newOpacity: Number(getComputedStyle(document.querySelector(".canvas-clip")!).opacity),
+              boundsError: Math.max(
+                Math.abs(bounds.left - overlay.left),
+                Math.abs(bounds.width - overlay.width),
+                Math.abs(bounds.height - overlay.height),
+              ),
+              loaded: current.width === 64,
+            });
+            if (current.width === 64 && loadedAt === undefined) loadedAt = performance.now();
+            if (loadedAt !== undefined && performance.now() - loadedAt > 1400) break;
+          }
+          return { preservedPixels, preservedAppearance, frames, released: outgoing.width === 0 };
+        },
+        { bytes: png, method },
+      );
+      assert.ok(
+        result.preservedPixels,
+        "Keep the outgoing pixels before replacing the WebGL texture.",
+      );
+      assert.ok(result.preservedAppearance, "Keep the outgoing color or monochrome treatment.");
+      assert.ok(
+        result.frames.some((frame) => !frame.loaded && frame.oldOpacity === 1),
+        "Hold the old image during decoding.",
+      );
+      if (reducedMotion === "reduce") {
+        assert.ok(
+          result.frames.every((frame) => frame.blur === 0),
+          "Reduced motion skips blur.",
+        );
+      } else {
+        assert.ok(
+          result.frames.some(
+            (frame) =>
+              frame.oldOpacity > 0.05 &&
+              frame.oldOpacity < 0.95 &&
+              frame.newOpacity > 0.05 &&
+              frame.blur > 0,
+          ),
+          "The old and new images must overlap while the old image blurs.",
+        );
+      }
+      assert.ok(
+        result.frames.every((frame) => frame.boundsError < 1),
+        "Clip the outgoing image to the moving bounds.",
+      );
+      assert.ok(result.released, "Release the temporary image after the crossfade.");
+      await waitForProcessedImage(page, { width: 64, height: 128 });
+      assertNoBrowserErrors(issues);
+    } finally {
+      await page.close();
+    }
+  });
+}
+
+test("keeps a valid replacement when a rapid invalid drop follows it", async () => {
+  const page = await getBrowser().newPage({
+    reducedMotion: "reduce",
+    viewport: { width: 1280, height: 960 },
+  });
+  const issues = watchForBrowserErrors(page);
+
+  try {
+    await page.goto(baseUrl);
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "initial.png",
+      mimeType: "image/png",
+      buffer: await createSplitColorPng(page, 64, 48),
+    });
+    await waitForProcessedImage(page, { height: 48, width: 64 });
+    const replacement = Array.from(await createSplitColorPng(page, 48, 64));
+
+    await page.evaluate((bytes) => {
+      const originalCreateImageBitmap = window.createImageBitmap;
+      const delayedCreateImageBitmap = async (...arguments_: unknown[]) => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        return Reflect.apply(originalCreateImageBitmap, window, arguments_) as Promise<ImageBitmap>;
+      };
+      window.createImageBitmap = delayedCreateImageBitmap as typeof window.createImageBitmap;
+
+      const dropzone = document.querySelector(".image-bounds");
+      if (!dropzone) throw new Error("The upload surface is unavailable.");
+      const drop = (file: File) => {
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        dropzone.dispatchEvent(
+          new DragEvent("drop", {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer: transfer,
+          }),
+        );
+      };
+
+      drop(new File([new Uint8Array(bytes)], "replacement.png", { type: "image/png" }));
+      setTimeout(() => {
+        drop(new File(["invalid"], "invalid.txt", { type: "text/plain" }));
+      }, 20);
+    }, replacement);
+
+    await waitForProcessedImage(page, { height: 64, width: 48 });
+    assert.equal(await page.locator('.message-chrome[data-error="true"]').count(), 0);
+    assertNoBrowserErrors(issues);
+  } finally {
+    await page.close();
+  }
+});
+
 test("keeps a 1086 by 1448 portrait image upright and undistorted", async () => {
   const page = await getBrowser().newPage({
     reducedMotion: "no-preference",
@@ -775,6 +1547,208 @@ test("keeps a 1086 by 1448 portrait image upright and undistorted", async () => 
   }
 });
 
+async function assertErrorChrome(page: Page, message: string): Promise<void> {
+  await page.waitForFunction((expected) => {
+    const chrome = document.querySelector('.message-chrome[data-error="true"]');
+    return (
+      chrome instanceof HTMLElement &&
+      Number.parseFloat(getComputedStyle(chrome).opacity) >= 0.99 &&
+      Array.from(chrome.querySelectorAll("[data-message-text]")).some(
+        (text) => text.textContent === expected && Number(getComputedStyle(text).opacity) >= 0.99,
+      ) &&
+      document.querySelector('[aria-live="polite"]')?.textContent === expected
+    );
+  }, message);
+}
+
+test("keeps the monochrome reference still while a dropped image decodes", async () => {
+  const page = await getBrowser().newPage({ colorScheme: "dark", reducedMotion: "no-preference" });
+  try {
+    await page.goto(baseUrl);
+    const bytes = Array.from(await createSplitColorPng(page, 360, 640));
+    await page.mouse.move(0, 0);
+    const reference = page.locator(".dropzone-reference");
+    await page.locator(".dropzone").dispatchEvent("dragenter");
+    await page.waitForFunction(() => {
+      const element = document.querySelector(".dropzone-reference");
+      if (!element) return false;
+      const style = getComputedStyle(element);
+      return style.opacity === "0.24" && style.transform === "none";
+    });
+    await page.evaluate((png) => {
+      const original = window.createImageBitmap;
+      let release: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const testWindow = window as Window & { releaseDecode?: () => void };
+      testWindow.releaseDecode = () => {
+        window.createImageBitmap = original;
+        release();
+        delete testWindow.releaseDecode;
+      };
+      window.createImageBitmap = (async (...args: unknown[]) => {
+        await gate;
+        return Reflect.apply(original, window, args);
+      }) as typeof createImageBitmap;
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array(png)], "portrait.png", { type: "image/png" }));
+      document
+        .querySelector(".dropzone")!
+        .dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
+    }, bytes);
+    await page.waitForTimeout(350);
+    assert.deepEqual(
+      await reference.evaluate((element) => ({
+        opacity: getComputedStyle(element).opacity,
+        transform: getComputedStyle(element).transform,
+      })),
+      { opacity: "0.24", transform: "none" },
+    );
+    await page.evaluate(() =>
+      (window as Window & { releaseDecode?: () => void }).releaseDecode?.(),
+    );
+    await waitForProcessedImage(page, { width: 360, height: 640 });
+  } finally {
+    await page.close();
+  }
+});
+
+test("keeps upload chrome centered while a tall image reveals", async () => {
+  const page = await getBrowser().newPage({
+    reducedMotion: "no-preference",
+    viewport: { width: 1490, height: 927 },
+  });
+  const issues = watchForBrowserErrors(page);
+  try {
+    await page.goto(baseUrl);
+    const bytes = Array.from(await createSplitColorPng(page, 1086, 1448));
+    await page.locator(".image-bounds").hover();
+    const samples = await page.evaluate(async (png) => {
+      const frames: {
+        opacity: number;
+        iconOffset: number;
+        textOffset: number;
+        iconWidth: number;
+      }[] = [];
+      const initialBounds = document.querySelector(".image-bounds")!.getBoundingClientRect();
+      const center = initialBounds.left + initialBounds.width / 2;
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array(png)], "tall.png", { type: "image/png" }));
+      document
+        .querySelector(".image-bounds")!
+        .dispatchEvent(
+          new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }),
+        );
+      const start = performance.now();
+      while (performance.now() - start < 6000) {
+        // Include the first visible frame after layout, not only the settled fade.
+        // oxlint-disable-next-line no-await-in-loop
+        await new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+        const chrome = document.querySelector(".message-chrome")!;
+        const icon = chrome.querySelector("[data-message-icon]")!.getBoundingClientRect();
+        const text = chrome.querySelector("[data-message-text]")!.getBoundingClientRect();
+        const opacity = Number(getComputedStyle(chrome).opacity);
+        frames.push({
+          opacity,
+          iconOffset: Math.abs(icon.left + icon.width / 2 - center),
+          textOffset: Math.abs(text.left + text.width / 2 - center),
+          iconWidth: icon.width,
+        });
+        if (opacity === 0) break;
+      }
+      return frames;
+    }, bytes);
+    const visibleFrames = samples.filter((sample) => sample.opacity > 0.02);
+    assert.ok(visibleFrames.length > 2, "Capture the fading chrome, including its first frame.");
+    assert.ok(
+      samples.some((sample) => sample.opacity === 0),
+      "The chrome must finish fading.",
+    );
+    assert.ok(
+      visibleFrames.every((sample) => sample.iconOffset < 1 && sample.textOffset < 1),
+      `The fading chrome must keep its initial horizontal center: ${JSON.stringify(visibleFrames)}.`,
+    );
+    assert.ok(
+      visibleFrames.every((sample) => Math.abs(sample.iconWidth - 36) < 1),
+      "The icon must not stretch with the bounds.",
+    );
+    await waitForProcessedImage(page, { width: 1086, height: 1448 });
+    assertNoBrowserErrors(issues);
+  } finally {
+    await page.close();
+  }
+});
+
+test("fades the mobile monogram with upload bounds and restores it after restart", async () => {
+  const page = await getBrowser().newPage({
+    reducedMotion: "no-preference",
+    viewport: { width: 565, height: 948 },
+  });
+  try {
+    await page.goto(baseUrl);
+    const monogram = page.locator(".dropzone-monogram").locator("..");
+    assert.equal(await monogram.evaluate((element) => getComputedStyle(element).opacity), "1");
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "wide.png",
+      mimeType: "image/png",
+      buffer: await createSplitColorPng(page, 128, 64),
+    });
+    await page.waitForFunction(() => {
+      const opacity = Number(
+        getComputedStyle(document.querySelector(".dropzone-monogram")!.parentElement!).opacity,
+      );
+      return opacity > 0 && opacity < 1;
+    });
+    await waitForProcessedImage(page, { width: 128, height: 64 });
+    await page.waitForFunction(
+      () =>
+        getComputedStyle(document.querySelector(".dropzone-monogram")!.parentElement!).opacity ===
+        "0",
+    );
+    await page.getByRole("button", { name: "Restart with another image" }).click();
+    await assertUploadStateRestored(page);
+    await page.waitForFunction(
+      () =>
+        getComputedStyle(document.querySelector(".dropzone-monogram")!.parentElement!).opacity ===
+        "1",
+    );
+  } finally {
+    await page.close();
+  }
+});
+
+test("wraps processing errors inside narrow portrait bounds", async () => {
+  const page = await getBrowser().newPage({ viewport: { width: 1280, height: 800 } });
+  try {
+    await page.goto(baseUrl);
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "portrait.png",
+      mimeType: "image/png",
+      buffer: await createSplitColorPng(page, 360, 640),
+    });
+    await waitForProcessedImage(page, { width: 360, height: 640 });
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "corrupt.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("not a PNG"),
+    });
+    await assertErrorChrome(page, "That image could not be processed. Try another file.");
+    await page.waitForFunction(() => {
+      const bounds = document.querySelector(".image-bounds")!.getBoundingClientRect();
+      const text = document.querySelector('[data-message-text][data-error="true"]');
+      if (!text) return false;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      return Array.from(range.getClientRects()).every(
+        (rect) => rect.left >= bounds.left && rect.right <= bounds.right,
+      );
+    });
+  } finally {
+    await page.close();
+  }
+});
+
 test("reports invalid files and keeps upload recovery available", async () => {
   const page = await getBrowser().newPage();
   const issues = watchForBrowserErrors(page);
@@ -787,13 +1761,255 @@ test("reports invalid files and keeps upload recovery available", async () => {
       buffer: Buffer.from("GIF89a"),
     });
 
-    const error = page.locator(".status.error");
-    await error.waitFor({ state: "visible" });
-    assert.equal(await error.innerText(), "Choose a PNG, JPEG, or WebP image.");
+    await assertErrorChrome(page, "Choose a PNG, JPEG, or WebP image.");
     await assertUploadStateRestored(page);
+    await page.waitForFunction(
+      () => {
+        const text = document.querySelector("[data-message-text]");
+        return (
+          !document.querySelector('.message-chrome[data-error="true"]') &&
+          text?.textContent === "Drop or browse an image to make it painterly" &&
+          Number(getComputedStyle(text).opacity) >= 0.99 &&
+          document.querySelector(".status")?.textContent === ""
+        );
+      },
+      undefined,
+      { timeout: 7_000 },
+    );
     assertNoBrowserErrors(issues);
   } finally {
     await page.close();
+  }
+});
+
+test("repeating the same error restarts its display time", async () => {
+  const page = await getBrowser().newPage({ reducedMotion: "reduce" });
+  const invalidFile = {
+    name: "invalid.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("invalid"),
+  };
+  try {
+    await page.goto(baseUrl);
+    const input = page.locator('input[type="file"]');
+    await input.setInputFiles(invalidFile);
+    await assertErrorChrome(page, "Choose a PNG, JPEG, or WebP image.");
+    await page.waitForTimeout(3_000);
+    await input.setInputFiles(invalidFile);
+    await page.waitForTimeout(3_000);
+    await assertErrorChrome(page, "Choose a PNG, JPEG, or WebP image.");
+    await page.waitForFunction(
+      () => !document.querySelector('.message-chrome[data-error="true"]'),
+      undefined,
+      { timeout: 3_000 },
+    );
+  } finally {
+    await page.close();
+  }
+});
+
+test("monochrome styling follows the theme without changing the full-color image", async () => {
+  const page = await getBrowser().newPage({ colorScheme: "light", reducedMotion: "no-preference" });
+  const issues = watchForBrowserErrors(page);
+  const expectMonochrome = async (selector: string, opacity: string, filter: string) => {
+    await page.waitForFunction(
+      (expected) => {
+        const element = document.querySelector(expected.selector);
+        if (!element) return false;
+        const style = getComputedStyle(element);
+        return style.opacity === expected.opacity && style.filter === expected.filter;
+      },
+      { selector, opacity, filter },
+    );
+  };
+  try {
+    await page.goto(baseUrl);
+    await page.locator(".dropzone").dispatchEvent("dragenter");
+    await expectMonochrome(
+      ".dropzone-reference",
+      "0.16",
+      "grayscale(1) brightness(1) contrast(0.9)",
+    );
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expectMonochrome(
+      ".dropzone-reference",
+      "0.24",
+      "grayscale(1) brightness(0.38) contrast(1.15)",
+    );
+    await page.locator(".dropzone").dispatchEvent("dragleave");
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "theme-fixture.png",
+      mimeType: "image/png",
+      buffer: await createSplitColorPng(page, 360, 480),
+    });
+    await waitForProcessedImage(page, { width: 360, height: 480 });
+    const canvas = ".canvas-surface canvas";
+    await expectMonochrome(canvas, "1", "grayscale(0) brightness(1) contrast(1)");
+    await page.locator(".dropzone").dispatchEvent("dragenter");
+    await expectMonochrome(canvas, "0.24", "grayscale(1) brightness(0.38) contrast(1.15)");
+    await page.emulateMedia({ colorScheme: "light" });
+    await expectMonochrome(canvas, "0.16", "grayscale(1) brightness(1) contrast(0.9)");
+    await page.locator(".dropzone").dispatchEvent("dragleave");
+    await expectMonochrome(canvas, "1", "grayscale(0) brightness(1) contrast(1)");
+    assertNoBrowserErrors(issues);
+  } finally {
+    await page.close();
+  }
+});
+
+test("theme control cycles, persists, and follows the system only in System mode", async () => {
+  const page = await getBrowser().newPage({
+    colorScheme: "dark",
+    reducedMotion: "no-preference",
+    viewport: { width: 800, height: 700 },
+  });
+  const issues = watchForBrowserErrors(page);
+  try {
+    await page.goto(baseUrl);
+    const control = page.getByRole("button", { name: /^Theme:/ });
+    await control.waitFor();
+    await page.waitForFunction(() => document.documentElement.classList.contains("dark"));
+    assert.match((await control.getAttribute("aria-label"))!, /System/);
+    const rect = (await control.boundingBox())!;
+    assert.ok(rect.x >= 0 && rect.x < 40 && rect.y > 630 && rect.y + rect.height <= 700);
+    const darkBackground = await page
+      .locator(".ds-root")
+      .evaluate((element) => getComputedStyle(element).backgroundColor);
+    await control.click();
+    await page.waitForFunction(() => document.documentElement.classList.contains("light"));
+    await page.waitForFunction(
+      (previousColor) =>
+        getComputedStyle(document.querySelector(".ds-root")!).backgroundColor !== previousColor,
+      darkBackground,
+    );
+    const lightBackground = await page
+      .locator(".ds-root")
+      .evaluate((element) => getComputedStyle(element).backgroundColor);
+    assert.notEqual(lightBackground, darkBackground);
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.emulateMedia({ colorScheme: "dark" });
+    assert.equal(await page.locator("html").getAttribute("data-theme"), "light");
+    assert.ok(
+      await page.locator("html").evaluate((element) => element.classList.contains("light")),
+    );
+    await page.reload();
+    await control.waitFor();
+    await page.waitForFunction(() =>
+      document.querySelector('button[aria-label="Theme: Light. Switch to Dark"]'),
+    );
+    await control.press("Enter");
+    await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+    await control.press("Space");
+    await page.waitForFunction(() => document.documentElement.dataset.theme === "system");
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.waitForFunction(() => document.documentElement.classList.contains("light"));
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.waitForFunction(() => document.documentElement.classList.contains("dark"));
+    assert.match((await control.getAttribute("aria-label"))!, /System/);
+    assertNoBrowserErrors(issues);
+  } finally {
+    await page.close();
+  }
+});
+
+test("theme colors crossfade for 180ms, but not on mount or with reduced motion", async () => {
+  const page = await getBrowser().newPage({ colorScheme: "dark", reducedMotion: "no-preference" });
+  try {
+    await page.goto(baseUrl);
+    await page
+      .getByRole("button", { name: "Theme: System. Switch to Light", exact: true })
+      .waitFor();
+    assert.equal(
+      await page.locator("html").evaluate((el) => el.classList.contains("theme-transitioning")),
+      false,
+    );
+    const transition = await page.evaluate(async () => {
+      const html = document.documentElement;
+      const surface = document.querySelector(".ds-root")!;
+      const button = document.querySelector<HTMLButtonElement>('button[aria-label^="Theme:"]')!;
+      const initialColor = getComputedStyle(surface).backgroundColor;
+      button.click();
+      const style = getComputedStyle(surface);
+      const duration = style.transitionDuration;
+      const easing = style.transitionTimingFunction;
+      const guarded = html.classList.contains("theme-transitioning");
+      const fade = surface
+        .getAnimations()
+        .find(
+          (animation) =>
+            animation instanceof CSSTransition &&
+            animation.transitionProperty === "background-color",
+        );
+      if (!fade) throw new Error("Expected a background-color CSS transition");
+      fade.pause();
+      fade.currentTime = 90;
+      const middle = getComputedStyle(surface).backgroundColor;
+      fade.play();
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return {
+        before: initialColor,
+        middle,
+        after: getComputedStyle(surface).backgroundColor,
+        duration,
+        easing,
+        guarded,
+        cleaned: !html.classList.contains("theme-transitioning"),
+      };
+    });
+    assert.equal(transition.guarded, true);
+    assert.ok(transition.duration.split(", ").every((value) => value === "0.18s"));
+    assert.ok(transition.easing.split(", ").every((value) => value === "ease-in-out"));
+    assert.notEqual(transition.middle, transition.before);
+    assert.notEqual(transition.middle, transition.after);
+    assert.equal(transition.cleaned, true);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const reduced = await page.evaluate(() => {
+      document.querySelector<HTMLButtonElement>('button[aria-label^="Theme:"]')!.click();
+      return {
+        guarded: document.documentElement.classList.contains("theme-transitioning"),
+        color: getComputedStyle(document.querySelector(".ds-root")!).backgroundColor,
+      };
+    });
+    assert.equal(reduced.guarded, false);
+    assert.equal(reduced.color, transition.before);
+  } finally {
+    await page.close();
+  }
+});
+
+test("theme control works without storage and honors reduced motion", async () => {
+  const context = await getBrowser().newContext({ colorScheme: "light", reducedMotion: "reduce" });
+  await context.addInitScript(() => {
+    Storage.prototype.getItem = () => {
+      throw new Error("Storage unavailable");
+    };
+    Storage.prototype.setItem = () => {
+      throw new Error("Storage unavailable");
+    };
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(baseUrl);
+    const control = page.getByRole("button", { name: /^Theme:/ });
+    await control.click();
+    await control.click();
+    await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+    const icons = await control.locator("[data-theme-icon]").evaluateAll((elements) =>
+      elements.map((element) => ({
+        transform: getComputedStyle(element).transform,
+        filter: getComputedStyle(element).filter,
+      })),
+    );
+    assert.ok(icons.length > 0);
+    assert.ok(
+      icons.every(
+        ({ transform, filter }) =>
+          (transform === "none" || transform === "matrix(1, 0, 0, 1, 0, 0)") &&
+          filter === "blur(0px)",
+      ),
+    );
+  } finally {
+    await context.close();
   }
 });
 
@@ -829,10 +2045,9 @@ test("disables upload when WebGL 2 is unavailable", async () => {
     );
 
     assert.equal(await dropzone.isEnabled(), false);
-    assert.equal(
-      await page.locator(".status.error").innerText(),
-      "This tool needs a browser with WebGL 2 support.",
-    );
+    await assertErrorChrome(page, "This tool needs a browser with WebGL 2 support.");
+    await page.waitForTimeout(5_100);
+    await assertErrorChrome(page, "This tool needs a browser with WebGL 2 support.");
     assertNoBrowserErrors(issues);
   } finally {
     await context.close();
