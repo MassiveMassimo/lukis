@@ -406,6 +406,7 @@ async function waitForProcessedImage(page: Page, expected: ImageExpectation): Pr
     ({ height, width }) => {
       const canvas = document.querySelector("canvas");
       const clip = document.querySelector(".canvas-clip");
+      const dropzone = document.querySelector<HTMLButtonElement>(".dropzone");
       const reveal = clip;
       if (!(canvas instanceof HTMLCanvasElement) || !(reveal instanceof HTMLElement)) {
         return false;
@@ -416,6 +417,7 @@ async function waitForProcessedImage(page: Page, expected: ImageExpectation): Pr
         canvas.width === width &&
         clip?.getAttribute("aria-hidden") === "false" &&
         (document.querySelector(".canvas-frame") as HTMLElement).dataset.animating !== "true" &&
+        dropzone?.disabled === false &&
         Number.parseFloat(getComputedStyle(reveal).opacity) >= 0.999
       );
     },
@@ -610,7 +612,7 @@ async function assertPortraitIsUpright(page: Page): Promise<void> {
 
 async function assertUploadStateRestored(page: Page): Promise<void> {
   const dropzone = page.getByRole("button", {
-    name: "Drop or browse an image to make it painterly",
+    name: "Turn an image into a painting",
   });
   try {
     await dropzone.waitFor({ state: "visible", timeout: 10_000 });
@@ -904,7 +906,10 @@ for (const scenario of [
               filter: string;
             }[] = [];
             let start: number | undefined;
-            function sample(now: number) {
+            function sample() {
+              // The rAF timestamp can precede this callback by startup/GPU work.
+              // Measure the DOM styles against the time they are actually read.
+              const now = performance.now();
               const clip = document.querySelector(".canvas-clip");
               if (clip?.getAttribute("aria-hidden") === "false") {
                 start ??= now;
@@ -954,10 +959,16 @@ for (const scenario of [
           assert.equal(middle.opacity, 0);
           assert.equal(middle.progress, 0);
           const revealing = samples.find(({ elapsed }) => elapsed >= 1650)!;
-          assert.ok(revealing.opacity > 0 && revealing.opacity < 1);
+          assert.ok(
+            revealing.opacity > 0 && revealing.opacity < 1,
+            `short reveal samples: ${JSON.stringify({ first: samples[0], middle, revealing, last })}`,
+          );
           assert.ok(Math.abs(revealing.opacity - revealing.progress) < 0.05);
         } else if (scenario.name === "linear")
-          assert.ok(middle.opacity > 0.35 && middle.opacity < 0.65);
+          assert.ok(
+            middle.opacity > 0.35 && middle.opacity < 0.65,
+            `linear reveal samples: ${JSON.stringify({ first: samples[0], middle, last })}`,
+          );
         else assert.ok(middle.opacity < 0.3, `late easing was ${middle.opacity} at 900ms`);
       }
       assertNoBrowserErrors(issues);
@@ -1048,6 +1059,79 @@ test("hidden controls cannot focus and sliders preserve pointer ownership", asyn
     await context.close();
   }
 });
+
+for (const reducedMotion of ["no-preference", "reduce"] as const) {
+  test(`NumberFlow preserves slider values and motion preferences (${reducedMotion})`, async () => {
+    const page = await getBrowser().newPage({
+      reducedMotion,
+      viewport: { width: 320, height: 720 },
+    });
+    const issues = watchForBrowserErrors(page);
+    try {
+      await page.goto(baseUrl);
+      await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
+      await page.locator('input[type="file"]').setInputFiles({
+        name: "numbers.png",
+        mimeType: "image/png",
+        buffer: await createSplitColorPng(page, 64, 48),
+      });
+      await waitForProcessedImage(page, { width: 64, height: 48 });
+      const initial = await page.evaluate(() =>
+        [...document.querySelectorAll("number-flow")].map((flow) => ({
+          value: flow.value,
+          suffix: flow.numberSuffix,
+          decimals: flow.format?.minimumFractionDigits,
+          shadow: !!flow.shadowRoot,
+        })),
+      );
+      assert.deepEqual(initial, [
+        { value: 78, suffix: "%", decimals: 0, shadow: true },
+        { value: 1.4, suffix: "", decimals: 1, shadow: true },
+      ]);
+      const paint = page.getByRole("slider", { name: "Paint" });
+      await paint.focus();
+      const state = await paint.evaluate(async (slider) => {
+        slider.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+        const flow = slider.querySelector("number-flow")!;
+        let animated = false;
+        const start = performance.now();
+        while (performance.now() - start < 180) {
+          animated ||= [...flow.shadowRoot!.querySelectorAll("*")].some((node) =>
+            node.getAnimations().some((animation) => animation.playState === "running"),
+          );
+          // oxlint-disable-next-line no-await-in-loop
+          await new Promise(requestAnimationFrame);
+        }
+        return { animated, value: flow.value, text: slider.getAttribute("aria-valuetext") };
+      });
+      assert.equal(state.value, 100);
+      assert.equal(state.text, "100%");
+      assert.equal(state.animated, reducedMotion === "no-preference");
+      const brush = page.getByRole("slider", { name: "Brush" });
+      await brush.press("End");
+      assert.equal(await brush.getAttribute("aria-valuetext"), "3.0");
+      await brush.press("Home");
+      assert.equal(await brush.getAttribute("aria-valuetext"), "0.7");
+      await paint.press("Home");
+      await paint.press("Shift+ArrowRight");
+      assert.equal(await paint.getAttribute("aria-valuetext"), "10%");
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll("number-flow")].every((flow) =>
+          [...flow.shadowRoot!.querySelectorAll("*")].every((node) =>
+            node.getAnimations().every((animation) => animation.playState !== "running"),
+          ),
+        ),
+      );
+      const flows = await page.evaluate(() =>
+        [...document.querySelectorAll("number-flow")].map((node) => node.value),
+      );
+      assert.deepEqual(flows, [10, 0.7]);
+      assertNoBrowserErrors(issues);
+    } finally {
+      await page.close();
+    }
+  });
+}
 
 test("tunes, downloads, and restarts a processed image", async () => {
   const page = await getBrowser().newPage({
@@ -1318,7 +1402,7 @@ for (const reducedMotion of ["no-preference", "reduce"] as const) {
               document.querySelector<HTMLElement>("#image-requirements")?.checkVisibility() ===
                 true ||
               [...document.querySelectorAll("[data-message-text]")].some((text) =>
-                text.textContent?.includes("Drop or browse"),
+                text.textContent?.includes("Turn an image into a painting"),
               ),
           });
           const canvas = document.querySelector("canvas")!;
@@ -1653,6 +1737,67 @@ test("keeps the monochrome reference still while a dropped image decodes", async
   }
 });
 
+for (const viewport of [
+  { width: 1490, height: 927 },
+  { width: 390, height: 844 },
+]) {
+  test(`keeps the reference centered during upload overshoot at ${viewport.width}px`, async () => {
+    const page = await getBrowser().newPage({
+      viewport,
+      colorScheme: "dark",
+      reducedMotion: "no-preference",
+    });
+    try {
+      await page.goto(baseUrl);
+      await page.waitForFunction(
+        () => !document.querySelector<HTMLButtonElement>(".dropzone")!.disabled,
+      );
+      const bytes = Array.from(await createSplitColorPng(page, 360, 640));
+      await page.locator(".dropzone").hover();
+      await page.waitForFunction(
+        () => getComputedStyle(document.querySelector(".dropzone-reference")!).transform === "none",
+      );
+      const samples = await page.evaluate(async (png) => {
+        const reference = document.querySelector(".dropzone-reference")!;
+        const frame = document.querySelector(".canvas-frame")!;
+        const initial = reference.getBoundingClientRect();
+        const center = initial.x + initial.width / 2;
+        const width = frame.getBoundingClientRect().width;
+        const frames: { offset: number; width: number }[] = [];
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([new Uint8Array(png)], "portrait.png", { type: "image/png" }));
+        const input = document.querySelector<HTMLInputElement>("#image-input")!;
+        input.files = transfer.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        const start = performance.now();
+        while (performance.now() - start < 6000) {
+          // oxlint-disable-next-line no-await-in-loop
+          await new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+          const bounds = reference.getBoundingClientRect();
+          frames.push({
+            offset: bounds.x + bounds.width / 2 - center,
+            width: frame.getBoundingClientRect().width,
+          });
+          if (!input.disabled) break;
+        }
+        return { frames, width };
+      }, bytes);
+      assert.ok(
+        samples.frames.some((sample) => sample.width > samples.width + 1),
+        "Capture the initial bounds overshoot.",
+      );
+      const maxOffset = Math.max(...samples.frames.map((sample) => Math.abs(sample.offset)));
+      assert.ok(
+        maxOffset < 1,
+        `The reference must stay centered through overshoot; drift was ${maxOffset}px.`,
+      );
+      await waitForProcessedImage(page, { width: 360, height: 640 });
+    } finally {
+      await page.close();
+    }
+  });
+}
+
 test("keeps upload chrome centered while a tall image reveals", async () => {
   const page = await getBrowser().newPage({
     reducedMotion: "no-preference",
@@ -1811,7 +1956,7 @@ test("reports invalid files and keeps upload recovery available", async () => {
         const text = document.querySelector("[data-message-text]");
         return (
           !document.querySelector('.message-chrome[data-error="true"]') &&
-          text?.textContent === "Drop or browse an image to make it painterly" &&
+          text?.textContent === "Turn an image into a painting" &&
           Number(getComputedStyle(text).opacity) >= 0.99 &&
           document.querySelector(".status")?.textContent === ""
         );
@@ -2061,6 +2206,486 @@ test("theme control works without storage and honors reduced motion", async () =
   }
 });
 
+test("motion parity: error recovery preserves outgoing text and upload icons", async () => {
+  const page = await getBrowser().newPage({ reducedMotion: "no-preference" });
+  try {
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
+    const result = await page.evaluate(async () => {
+      const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["invalid"], "invalid.txt", { type: "text/plain" }));
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      let sawError = false;
+      let enteringTextOverlap = false;
+      let recoveringTextOverlap = false;
+      let enteringIconOverlap = false;
+      let recoveringIconOverlap = false;
+      // Keep this helper inside the function serialized into the browser.
+      // oxlint-disable-next-line unicorn/consistent-function-scoping
+      const visible = (node: Element | undefined | null) =>
+        !!node &&
+        getComputedStyle(node).display !== "none" &&
+        Number(getComputedStyle(node).opacity) > 0.01;
+      const started = performance.now();
+      while (performance.now() - started < 7_000) {
+        // Sampling successive rendered frames must remain sequential.
+        // oxlint-disable-next-line no-await-in-loop
+        await new Promise(requestAnimationFrame);
+        const error =
+          document.querySelector(".message-chrome")?.getAttribute("data-error") === "true";
+        sawError ||= error;
+        const texts = Array.from(document.querySelectorAll("[data-message-text]"));
+        const normal = texts.find((node) => node.textContent === "Turn an image into a painting");
+        const failure = texts.find(
+          (node) => node.textContent === "Choose a PNG, JPEG, or WebP image.",
+        );
+        const textOverlap = visible(normal) && visible(failure);
+        const iconOverlap =
+          visible(document.querySelector('[data-message-icon="upload"]')) &&
+          visible(document.querySelector('[data-message-icon="error"]'));
+        if (error) {
+          enteringTextOverlap ||= textOverlap;
+          enteringIconOverlap ||= iconOverlap;
+        } else if (sawError) {
+          recoveringTextOverlap ||= textOverlap;
+          recoveringIconOverlap ||= iconOverlap;
+          if (texts.length === 1 && normal && Number(getComputedStyle(normal).opacity) >= 0.999)
+            break;
+        }
+      }
+      return {
+        sawError,
+        enteringTextOverlap,
+        recoveringTextOverlap,
+        enteringIconOverlap,
+        recoveringIconOverlap,
+      };
+    });
+    assert.deepEqual(result, {
+      sawError: true,
+      enteringTextOverlap: true,
+      recoveringTextOverlap: true,
+      enteringIconOverlap: true,
+      recoveringIconOverlap: true,
+    });
+    await assertUploadStateRestored(page);
+    assert.equal(await page.locator('[data-message-icon="error"]').isVisible(), false);
+  } finally {
+    await page.close();
+  }
+});
+
+test("motion parity: theme icons overlap and settle after rapid reversal", async () => {
+  const page = await getBrowser().newPage({ reducedMotion: "no-preference" });
+  try {
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
+    const result = await page.evaluate(async () => {
+      const button = document.querySelector<HTMLButtonElement>('button[aria-label^="Theme:"]')!;
+      const icons = Array.from(button.querySelectorAll<HTMLElement>("[data-theme-icon]"));
+      const shown = () =>
+        icons.filter((icon) => !icon.hidden && Number(getComputedStyle(icon).opacity) > 0.01);
+      button.click();
+      let overlap = false;
+      const started = performance.now();
+      while (performance.now() - started < 700) {
+        // oxlint-disable-next-line no-await-in-loop
+        await new Promise(requestAnimationFrame);
+        if (shown().length > 1) {
+          overlap = true;
+          break;
+        }
+      }
+      // Reverse the first icon's exit before it completes, then let all callbacks settle.
+      button.click();
+      button.click();
+      const reversed = performance.now();
+      while (performance.now() - reversed < 700) {
+        // oxlint-disable-next-line no-await-in-loop
+        await new Promise(requestAnimationFrame);
+      }
+      return {
+        overlap,
+        theme: document.documentElement.dataset.theme,
+        shown: shown().map((icon) => icon.dataset.themeIcon),
+      };
+    });
+    assert.deepEqual(result, { overlap: true, theme: "system", shown: ["system"] });
+  } finally {
+    await page.close();
+  }
+});
+
+function intermediateMonochrome(frame: { opacity: number; grayscale: number }): boolean {
+  return (
+    frame.opacity > 0.17 && frame.opacity < 0.99 && frame.grayscale > 0.01 && frame.grayscale < 0.99
+  );
+}
+
+test("motion parity: replacement monochrome interpolates and reverses continuously", async () => {
+  const page = await getBrowser().newPage({ colorScheme: "light", reducedMotion: "no-preference" });
+  try {
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "motion.png",
+      mimeType: "image/png",
+      buffer: await createSplitColorPng(page, 320, 240),
+    });
+    await waitForProcessedImage(page, { width: 320, height: 240 });
+    const result = await page.evaluate(async () => {
+      const dropzone = document.querySelector<HTMLElement>(".dropzone")!;
+      const canvas = document.querySelector<HTMLCanvasElement>("#preview")!;
+      const sample = () => {
+        const style = getComputedStyle(canvas);
+        return {
+          opacity: Number(style.opacity),
+          grayscale: Number(style.filter.match(/grayscale\(([^)]+)\)/)?.[1]),
+          mask: style.maskImage,
+        };
+      };
+      const initial = sample();
+      const entering: ReturnType<typeof sample>[] = [];
+      dropzone.dispatchEvent(new Event("dragenter", { bubbles: true }));
+      const started = performance.now();
+      while (performance.now() - started < 900) {
+        // oxlint-disable-next-line no-await-in-loop
+        await new Promise(requestAnimationFrame);
+        entering.push(sample());
+      }
+      const monochrome = sample();
+      const leaving: ReturnType<typeof sample>[] = [];
+      dropzone.dispatchEvent(new Event("dragleave", { bubbles: true }));
+      const reversed = performance.now();
+      while (performance.now() - reversed < 900) {
+        // oxlint-disable-next-line no-await-in-loop
+        await new Promise(requestAnimationFrame);
+        leaving.push(sample());
+      }
+      const restored = sample();
+      dropzone.dispatchEvent(new Event("dragenter", { bubbles: true }));
+      const interruptedAt = performance.now();
+      let beforeReversal = sample();
+      while (performance.now() - interruptedAt < 600) {
+        // Reverse on an observed intermediate frame, not a fixed wall-clock delay.
+        // oxlint-disable-next-line no-await-in-loop
+        await new Promise(requestAnimationFrame);
+        beforeReversal = sample();
+        if (beforeReversal.opacity > 0.3 && beforeReversal.opacity < 0.9) break;
+      }
+      dropzone.dispatchEvent(new Event("dragleave", { bubbles: true }));
+      const afterReversal = sample();
+      const interruptedExit: ReturnType<typeof sample>[] = [];
+      const resumedAt = performance.now();
+      while (performance.now() - resumedAt < 900) {
+        // oxlint-disable-next-line no-await-in-loop
+        await new Promise(requestAnimationFrame);
+        interruptedExit.push(sample());
+      }
+      return {
+        initial,
+        entering,
+        monochrome,
+        leaving,
+        restored,
+        beforeReversal,
+        afterReversal,
+        interruptedExit,
+        settled: sample(),
+      };
+    });
+    assert.ok(
+      result.entering.some(intermediateMonochrome),
+      "Hover must interpolate opacity and grayscale.",
+    );
+    assert.ok(
+      result.leaving.some(intermediateMonochrome),
+      "Hover exit must interpolate from its current appearance.",
+    );
+    assert.ok(
+      result.entering.some(
+        (frame) => frame.mask !== result.initial.mask && frame.mask !== result.monochrome.mask,
+      ),
+      "The mask must interpolate with the image.",
+    );
+    assert.ok(Math.abs(result.monochrome.opacity - 0.16) < 0.001);
+    assert.equal(result.restored.opacity, 1);
+    assert.equal(result.restored.grayscale, 0);
+    assert.ok(
+      intermediateMonochrome(result.beforeReversal),
+      "Reverse while the hover is still moving.",
+    );
+    assert.ok(
+      Math.abs(result.afterReversal.opacity - result.beforeReversal.opacity) < 0.005,
+      "Reversal must preserve the current opacity.",
+    );
+    assert.ok(
+      Math.abs(result.afterReversal.grayscale - result.beforeReversal.grayscale) < 0.005,
+      "Reversal must preserve the current grayscale.",
+    );
+    assert.equal(
+      result.afterReversal.mask,
+      result.beforeReversal.mask,
+      "Reversal must preserve the current mask.",
+    );
+    assert.ok(
+      result.interruptedExit.some(intermediateMonochrome),
+      "Interrupted hover must animate back to color.",
+    );
+    assert.equal(result.settled.opacity, 1);
+    assert.equal(result.settled.grayscale, 0);
+  } finally {
+    await page.close();
+  }
+});
+
+test("motion parity: reduced motion retains preview fade without slider stretch", async () => {
+  const page = await getBrowser().newPage({ reducedMotion: "reduce" });
+  try {
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
+    await page.evaluate(() => {
+      const state = { samples: [] as number[], done: false };
+      (window as Window & { reducedReveal?: typeof state }).reducedReveal = state;
+      const clip = document.querySelector<HTMLElement>(".canvas-clip")!;
+      const started = performance.now();
+      function sample() {
+        if (clip.getAttribute("aria-hidden") === "false") {
+          const opacity = Number(getComputedStyle(clip).opacity);
+          state.samples.push(opacity);
+          if (opacity >= 0.999) state.done = true;
+        }
+        if (!state.done && performance.now() - started < 10_000) requestAnimationFrame(sample);
+      }
+      requestAnimationFrame(sample);
+    });
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "reduced.png",
+      mimeType: "image/png",
+      buffer: await createSplitColorPng(page, 320, 240),
+    });
+    await waitForProcessedImage(page, { width: 320, height: 240 });
+    const samples = await page.evaluate(
+      () => (window as Window & { reducedReveal?: { samples: number[] } }).reducedReveal!.samples,
+    );
+    const slider = page.getByRole("slider", { name: "Paint", exact: true });
+    const bounds = (await slider.boundingBox())!;
+    const initialWidth = await slider
+      .locator(".slider-track")
+      .evaluate((node) => node.getBoundingClientRect().width);
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x - 200, bounds.y + bounds.height / 2, { steps: 5 });
+    const held = await slider
+      .locator(".slider-track")
+      .evaluate((node) => node.getBoundingClientRect().width);
+    await page.mouse.up();
+    assert.ok(
+      samples.some((opacity) => opacity > 0 && opacity < 0.999),
+      `Reduced preview must fade: ${JSON.stringify(samples)}`,
+    );
+    assert.ok(
+      Math.abs(held - initialWidth) < 0.5,
+      `Reduced motion stretched the slider by ${held - initialWidth}px.`,
+    );
+  } finally {
+    await page.close();
+  }
+});
+
+for (const reducedMotion of ["no-preference", "reduce"] as const) {
+  test(`export feedback keeps busy icons and swaps to success checks (${reducedMotion})`, async () => {
+    const page = await getBrowser().newPage({
+      reducedMotion,
+      viewport: { width: 320, height: 720 },
+    });
+    const issues = watchForBrowserErrors(page);
+    try {
+      await page.goto(baseUrl);
+      await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
+      await page.locator('input[type="file"]').setInputFiles({
+        name: "export.png",
+        mimeType: "image/png",
+        buffer: await createSplitColorPng(page, 64, 48),
+      });
+      await waitForProcessedImage(page, { width: 64, height: 48 });
+      await page.evaluate(() => {
+        const toBlob = HTMLCanvasElement.prototype.toBlob;
+        HTMLCanvasElement.prototype.toBlob = function (callback, type, quality) {
+          setTimeout(() => toBlob.call(this, callback, type, quality), 450);
+        };
+        // Capture the real PNG using native ClipboardItem, without changing the OS clipboard.
+        Object.defineProperty(navigator, "clipboard", {
+          configurable: true,
+          value: {
+            async write(items: ClipboardItem[]) {
+              document.body.dataset.copyCalls = String(
+                Number(document.body.dataset.copyCalls ?? 0) + 1,
+              );
+              const blob = await items[0].getType("image/png");
+              const reader = new FileReader();
+              const encoded = new Promise<string>((resolve) => {
+                reader.addEventListener("load", () => resolve(String(reader.result)), {
+                  once: true,
+                });
+                reader.readAsDataURL(blob);
+              });
+              document.body.dataset.copiedPng = await encoded;
+            },
+          },
+        });
+      });
+      const downloaded = page.waitForEvent("download");
+      await page.locator("#download").click();
+      await page.waitForFunction(
+        () => document.querySelector("#download")?.getAttribute("aria-busy") === "true",
+      );
+      assert.equal(await page.locator("#copy").isDisabled(), true);
+      assert.equal(await page.locator("#download [data-button-icon='idle']").isVisible(), true);
+      assert.equal(await page.locator("#download .spinner").count(), 0);
+      const download = await downloaded;
+      const stream = await download.createReadStream();
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+      const png = `data:image/png;base64,${Buffer.concat(chunks).toString("base64")}`;
+      await page.waitForFunction(
+        () => document.querySelector<HTMLElement>("#download")?.dataset.feedbackState === "success",
+      );
+      const drawn = await page.evaluate(async () => {
+        const path = document.querySelector("#download [data-animated-check]")!;
+        const offsets: number[] = [];
+        const start = performance.now();
+        while (performance.now() - start < 500) {
+          offsets.push(Number.parseFloat(getComputedStyle(path).strokeDashoffset));
+          // oxlint-disable-next-line no-await-in-loop
+          await new Promise(requestAnimationFrame);
+        }
+        return offsets;
+      });
+      assert.equal(drawn.at(-1), 0);
+      if (reducedMotion === "reduce") assert.ok(drawn.every((offset) => offset === 0));
+      else
+        assert.ok(
+          drawn.some((offset) => offset > 0 && offset < 1),
+          "The check must draw, not pop in.",
+        );
+      await page.locator("#download").hover();
+      assert.equal(
+        await page
+          .locator("#download [data-animated-check]")
+          .evaluate((path) => getComputedStyle(path).strokeDashoffset),
+        "0px",
+      );
+      await page.locator("#copy").focus();
+      await page.keyboard.press("Enter");
+      await page.waitForFunction(
+        () => document.querySelector("#copy")?.getAttribute("aria-busy") === "true",
+      );
+      await page.evaluate(() => document.querySelector<HTMLButtonElement>("#copy")!.click());
+      await page.waitForFunction(
+        () => document.querySelector<HTMLElement>("#copy")?.dataset.feedbackState === "success",
+      );
+      assert.equal(await page.locator("body").getAttribute("data-copy-calls"), "1");
+      assert.equal(await page.locator("body").getAttribute("data-copied-png"), png);
+      assert.equal(
+        await page.locator(".status").textContent(),
+        "Painterly PNG copied to clipboard.",
+      );
+      const layout = await page.locator(".control-actions").evaluate((row) => ({
+        width: row.getBoundingClientRect().width,
+        scroll: row.scrollWidth,
+        exportGap:
+          row.querySelector("#copy")!.getBoundingClientRect().left -
+          row.querySelector("#download")!.getBoundingClientRect().right,
+        rightGap:
+          row.getBoundingClientRect().right -
+          row.querySelector("#copy")!.getBoundingClientRect().right,
+      }));
+      assert.ok(layout.scroll <= layout.width + 1, "Three buttons must fit on mobile.");
+      assert.equal(layout.exportGap, 8);
+      assert.ok(Math.abs(layout.rightGap) < 1, "Export actions stay grouped on the right.");
+      await page.waitForFunction(
+        () => document.querySelector<HTMLElement>("#copy")?.dataset.feedbackState === "idle",
+      );
+      assertNoBrowserErrors(issues);
+    } finally {
+      await page.close();
+    }
+  });
+}
+
+test("export failures restore the idle icon and preserve the downloadable image", async () => {
+  const page = await getBrowser().newPage({ reducedMotion: "reduce" });
+  try {
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "failure.png",
+      mimeType: "image/png",
+      buffer: await createSplitColorPng(page, 64, 48),
+    });
+    await waitForProcessedImage(page, { width: 64, height: 48 });
+    const baselinePng = await downloadPixels(page);
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          write() {
+            return Promise.reject(new DOMException("Permission denied", "NotAllowedError"));
+          },
+        },
+      });
+    });
+    await page.locator("#copy").click();
+    await page.waitForFunction(() =>
+      document.querySelector(".status")?.textContent?.includes("could not be copied"),
+    );
+    assert.equal(await page.locator("#copy").getAttribute("data-feedback-state"), "idle");
+    assert.equal(await page.locator("#copy").getAttribute("aria-busy"), null);
+    assert.equal(await page.locator("#download").isEnabled(), true);
+    assert.equal(await downloadPixels(page), baselinePng);
+    await page.evaluate(() => {
+      const toBlob = HTMLCanvasElement.prototype.toBlob;
+      HTMLCanvasElement.prototype.toBlob = function (callback) {
+        HTMLCanvasElement.prototype.toBlob = toBlob;
+        callback(null);
+      };
+    });
+    await page.locator("#download").click();
+    await page.waitForFunction(() =>
+      document.querySelector(".status")?.textContent?.includes("could not be downloaded"),
+    );
+    assert.equal(await page.locator("#download").getAttribute("data-feedback-state"), "idle");
+    assert.equal(await downloadPixels(page), baselinePng);
+  } finally {
+    await page.close();
+  }
+});
+
+test("unavailable image clipboard disables Copy but preserves Download", async () => {
+  const page = await getBrowser().newPage({ reducedMotion: "reduce" });
+  try {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    });
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "unsupported.png",
+      mimeType: "image/png",
+      buffer: await createSplitColorPng(page, 64, 48),
+    });
+    await waitForProcessedImage(page, { width: 64, height: 48 });
+    assert.equal(await page.locator("#copy").isDisabled(), true);
+    assert.equal(await page.locator("#download").isEnabled(), true);
+    assert.match((await page.locator("#copy").getAttribute("title")) ?? "", /unavailable/);
+  } finally {
+    await page.close();
+  }
+});
+
 test("disables upload when WebGPU is unavailable", async () => {
   const context = await getBrowser().newContext();
   await context.addInitScript(() => {
@@ -2073,14 +2698,13 @@ test("disables upload when WebGPU is unavailable", async () => {
     await page.goto(baseUrl);
     await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     const dropzone = page.getByRole("button", {
-      name: "Drop or browse an image to make it painterly",
+      name: "Turn an image into a painting",
     });
     await dropzone.waitFor({ state: "visible" });
     await page.waitForFunction(
       () =>
-        document.querySelector<HTMLButtonElement>(
-          '[aria-label="Drop or browse an image to make it painterly"]',
-        )?.disabled === true,
+        document.querySelector<HTMLButtonElement>('[aria-label="Turn an image into a painting"]')
+          ?.disabled === true,
     );
 
     assert.equal(await dropzone.isEnabled(), false);

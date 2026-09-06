@@ -11,6 +11,8 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
+    "deploy": "pnpm build && wrangler deploy --strict",
+    "deploy:check": "pnpm build && wrangler deploy --dry-run --strict",
     "start": "astro preview",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
@@ -26,6 +28,7 @@
     "animejs": "4.5.0",
     "cuelume": "0.2.2",
     "dialkit": "2.0.0",
+    "number-flow": "0.6.2",
     "vgpu": "0.4.0"
   },
   "devDependencies": {
@@ -39,6 +42,7 @@
     "oxfmt": "0.65.0",
     "oxlint": "1.80.0",
     "tailwindcss": "4.3.3",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "wrangler": "4.127.1"
   }
 }

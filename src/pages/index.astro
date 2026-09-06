@@ -1,16 +1,12 @@
 ---
 import "../styles/global.css";
-import "../styles/app.css";
 import Button from "../components/Button.astro";
 import ElasticSlider from "../components/ElasticSlider.astro";
-import Logo from "../components/Logo.astro";
-import Upload from "@tabler/icons/outline/upload.svg";
-import Alert from "@tabler/icons/outline/alert-circle.svg";
+import UploadPreview from "../components/UploadPreview.astro";
+import ThemeToggle from "../components/ThemeToggle.astro";
 import Refresh from "@tabler/icons/outline/refresh.svg";
 import Download from "@tabler/icons/outline/download.svg";
-import Desktop from "@tabler/icons/outline/device-desktop.svg";
-import Sun from "@tabler/icons/outline/sun.svg";
-import Moon from "@tabler/icons/outline/moon.svg";
+import Copy from "@tabler/icons/outline/copy.svg";
 import { THEME_SCRIPT } from "../lib/theme";
 ---
 <!doctype html>
@@ -18,7 +14,7 @@ import { THEME_SCRIPT } from "../lib/theme";
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Lukis — Make it painterly</title>
+    <title>Lukis — Turn images into paintings</title>
     <meta name="description" content="Turn your images into paintings. Adjust the brush and paint, then download a PNG. Processed privately in your browser." />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Lukis — Turn images into paintings" />
@@ -38,33 +34,22 @@ import { THEME_SCRIPT } from "../lib/theme";
     <script is:inline set:html={THEME_SCRIPT} />
   </head>
   <body class="font-sans antialiased">
-    <div class="ds-root">
-      <main class="app-main">
-        <section class="tool-surface" aria-label="Lukis image processor">
+    <div class="ds-root min-h-svh bg-background text-foreground">
+      <main class="app-main grid min-h-svh grid-cols-1 place-items-center p-(--page-padding)">
+        <section class="tool-surface relative isolate w-full max-w-4xl" aria-label="Lukis image processor">
           <input id="image-input" type="file" accept="image/png,image/jpeg,image/webp" aria-hidden="true" tabindex="-1" class="sr-only" />
-          <div class="result">
-            <div class="preview-stage">
-              <span class="frame-guides" aria-hidden="true">{["top", "right", "bottom", "left"].map((side) => <span class={`guide-line guide-line-${side}`}></span>)}</span>
-              <div class="logo-frame" aria-hidden="true"><Logo class="dropzone-monogram mask-linear-180 mask-linear-from-30% mask-linear-to-100%" /></div>
-              <div class="canvas-frame">
-                <button class="image-bounds dropzone" type="button" aria-label="Drop or browse an image to make it painterly" aria-describedby="image-requirements">
-                  <span class="reference-frame" aria-hidden="true"><span class="dropzone-reference"></span></span>
-                  <span class="canvas-clip" aria-hidden="true"><span class="canvas-surface"><canvas id="preview" aria-label="Painterly processed image preview"></canvas></span></span>
-                </button>
-              </div>
-              <span class="outgoing-bounds" aria-hidden="true"><span class="outgoing-image"><canvas id="outgoing"></canvas></span></span>
-              <span class="message-chrome" aria-hidden="false">
-                <span class="message-icon" aria-hidden="true"><span data-message-icon="upload"><Upload /></span><span data-message-icon="error" hidden><Alert /></span></span>
-                <span class="message-copy"><strong data-message-text>Drop or browse an image to make it painterly</strong><small id="image-requirements">PNG, JPEG, WebP · max 25 MB · output up to 1600px</small></span>
-              </span>
-            </div>
-            <div class="controls-space" hidden>
-              <div class="controls" inert>
-                <div class="control-row"><ElasticSlider label="Paint" min={0} max={100} step={1} value={78} suffix="%" notches={[10, 20, 30, 40, 50, 60, 70, 80, 90]} /></div>
-                <div class="control-row"><ElasticSlider label="Brush" min={0.7} max={3} step={0.1} value={1.4} notches={[1, 1.5, 2, 2.5]} /></div>
-                <div class="control-actions">
+          <div class="result w-full">
+            <UploadPreview />
+            <div class="controls-space h-0" hidden>
+              <div class="controls relative top-6 m-auto grid gap-4 px-2 compact:top-4" inert>
+                <div class="control-row w-full max-w-lg justify-self-center"><ElasticSlider label="Paint" min={0} max={100} step={1} value={78} suffix="%" notches={[10, 20, 30, 40, 50, 60, 70, 80, 90]} /></div>
+                <div class="control-row w-full max-w-lg justify-self-center"><ElasticSlider label="Brush" min={0.7} max={3} step={0.1} value={1.4} notches={[1, 1.5, 2, 2.5]} /></div>
+                <div class="control-actions flex w-full max-w-lg items-center justify-between justify-self-center">
                   <Button id="restart" label="Restart with another image" title="Restart" variant="secondary" size="icon"><Refresh slot="icon" /></Button>
-                  <Button id="download" label="Download painterly PNG" title="Download PNG" variant="secondary" size="icon"><Download slot="icon" /></Button>
+                  <div class="export-actions flex items-center gap-2" role="group" aria-label="Save image">
+                    <Button id="download" label="Download painterly PNG" title="Download PNG" variant="secondary" size="icon" feedback><Download slot="icon" /></Button>
+                    <Button id="copy" label="Copy painterly PNG" title="Copy PNG" variant="secondary" size="icon" feedback><Copy slot="icon" /></Button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -73,11 +58,7 @@ import { THEME_SCRIPT } from "../lib/theme";
           <noscript><p>Enable JavaScript to process images in Lukis.</p></noscript>
         </section>
       </main>
-      <div class="theme-controls">
-        <Button id="theme" label="Theme: System. Switch to Light" variant="ghost" size="icon">
-          <span slot="icon" class="theme-icons"><span data-theme-icon="system"><Desktop /></span><span data-theme-icon="light" hidden><Sun /></span><span data-theme-icon="dark" hidden><Moon /></span></span>
-        </Button>
-      </div>
+      <ThemeToggle />
     </div>
     <script>import { mountApp } from "../lib/app"; mountApp();</script>
   </body>

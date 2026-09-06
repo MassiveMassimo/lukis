@@ -1,0 +1,29 @@
+<span class="frame-guides pointer-events-none absolute inset-0 z-5" aria-hidden="true">
+  {["top", "right", "bottom", "left"].map((side) => (
+    <span class:list={[
+      "guide-line fixed",
+      `guide-line-${side}`,
+      side === "top" || side === "bottom" ? "horizontal left-0 h-px w-screen" : "vertical inset-y-0 w-px",
+      { "top-(--guide-top)": side === "top", "top-(--guide-bottom)": side === "bottom", "left-(--guide-left)": side === "left", "left-(--guide-right)": side === "right" },
+    ]}></span>
+  ))}
+</span>
+
+<style>
+  .frame-guides { --guide-color: var(--border); }
+  .horizontal {
+    background: repeating-linear-gradient(to right, var(--guide-color) 0 6px, transparent 6px 11px);
+    mask-image: linear-gradient(to right, rgb(0 0 0 / 0.1), black 12%, black 88%, rgb(0 0 0 / 0.1));
+  }
+  .vertical {
+    background: repeating-linear-gradient(to bottom, var(--guide-color) 0 6px, transparent 6px 11px);
+    mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0.1), black 24%, black 76%, rgb(0 0 0 / 0.1));
+  }
+  :global(.preview-stage:has(.dropzone:focus-visible)) .frame-guides,
+  :global(.preview-stage[data-dragging="true"]) .frame-guides {
+    --guide-color: var(--focus-ring);
+  }
+  @media (max-width: 44rem) {
+    .horizontal { mask-image: none; }
+  }
+</style>

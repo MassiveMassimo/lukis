@@ -1,12 +1,14 @@
 ---
 // Adapted from Fluid Functionalism. See licenses/fluid-functionalism.txt.
 import type { HTMLAttributes } from "astro/types";
+import AnimatedCheck from "./AnimatedCheck.astro";
 
 interface Props extends HTMLAttributes<"button"> {
   label: string;
   variant?: "primary" | "secondary" | "tertiary" | "ghost";
   size?: "default" | "compact" | "icon" | "icon-compact";
   loading?: boolean;
+  feedback?: boolean;
 }
 
 const {
@@ -14,6 +16,7 @@ const {
   variant = "primary",
   size = "default",
   loading = false,
+  feedback = false,
   disabled = false,
   type = "button",
   class: className,
@@ -22,18 +25,28 @@ const {
 const iconOnly = size === "icon" || size === "icon-compact";
 const leadingIcon = Astro.slots.has("icon");
 const trailingIcon = Astro.slots.has("trailing-icon");
+const sizeClasses = {
+  default: "h-9 gap-1.5 px-4 text-[13px]",
+  compact: "h-7 gap-1 px-3 text-xs",
+  icon: "size-9 gap-1.5 p-0 text-base",
+  "icon-compact": "size-7 gap-1.5 p-0 text-base",
+};
 ---
 
 <button
   {...attributes}
   type={type}
   class:list={[
-    "fluid-button relative isolate inline-flex h-9 cursor-pointer appearance-none items-center justify-center gap-1.5 border-0 bg-transparent px-4 font-sans text-[13px] outline-none transition-colors duration-[80ms] disabled:pointer-events-none disabled:opacity-50",
+    "fluid-button relative isolate inline-flex cursor-pointer appearance-none items-center justify-center rounded-control border-0 bg-transparent font-sans leading-normal outline-none transition-colors duration-[80ms] disabled:pointer-events-none focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-focus-ring motion-reduce:transition-none",
+    sizeClasses[size],
+    !iconOnly && leadingIcon && (size === "compact" ? "pl-1.5" : "pl-2.5"),
+    !iconOnly && trailingIcon && (size === "compact" ? "pr-1.5" : "pr-2.5"),
     className,
   ]}
   data-variant={variant}
   data-size={size}
   data-loading={String(loading)}
+  data-feedback={String(feedback)}
   data-idle-disabled={String(disabled)}
   data-leading-icon={leadingIcon}
   data-trailing-icon={trailingIcon}
@@ -41,15 +54,15 @@ const trailingIcon = Astro.slots.has("trailing-icon");
   aria-busy={loading ? "true" : undefined}
   disabled={disabled || loading}
 >
-  <span class="surface" data-button-background aria-hidden="true"></span>
-  <span class="content">
-    <span class="idle-content">
-      {leadingIcon && <span class="icon" aria-hidden="true"><slot name="icon" /></span>}
-      {!iconOnly && <span class="label">{label}</span>}
-      {trailingIcon && <span class="icon" aria-hidden="true"><slot name="trailing-icon" /></span>}
+  <span class="surface absolute inset-px rounded-[inherit] bg-(--button-fill)" data-button-background aria-hidden="true"></span>
+  <span class="content relative inline-flex items-center justify-center gap-[inherit]">
+    <span class="idle-content relative inline-flex items-center justify-center gap-[inherit]" data-button-icon={feedback ? "idle" : undefined}>
+      {leadingIcon && <span class="icon inline-flex" aria-hidden="true"><slot name="icon" /></span>}
+      {!iconOnly && <span class="label whitespace-nowrap [text-box:trim-both_cap_alphabetic]">{label}</span>}
+      {trailingIcon && <span class="icon inline-flex" aria-hidden="true"><slot name="trailing-icon" /></span>}
     </span>
-    <span class="spinner" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none">
+    {!feedback && <span class="spinner absolute inset-0 hidden items-center justify-center" aria-hidden="true">
+      <svg class:list={["shrink-0", size === "compact" || size === "icon-compact" ? "size-7" : "size-9"]} viewBox="0 0 24 24" fill="none">
         <path
           d="M 12 12 C 14 8.5 19 8.5 19 12 C 19 15.5 14 15.5 12 12 C 10 8.5 5 8.5 5 12 C 5 15.5 10 15.5 12 12 Z"
           stroke="currentColor"
@@ -58,7 +71,8 @@ const trailingIcon = Astro.slots.has("trailing-icon");
           pathLength="100"
         ></path>
       </svg>
-    </span>
+    </span>}
+    {feedback && <span class="success icon inline-flex" data-button-icon="success" hidden aria-hidden="true"><AnimatedCheck /></span>}
   </span>
 </button>
 
@@ -66,20 +80,10 @@ const trailingIcon = Astro.slots.has("trailing-icon");
   .fluid-button {
     --button-fill: var(--foreground, #171717);
     --button-ring: var(--button-fill);
-    border-radius: var(--control-radius, 10px);
     color: var(--background, #fff);
   }
 
-  .fluid-button:focus-visible {
-    outline: 1px solid var(--focus-ring, #6b97ff);
-    outline-offset: 2px;
-  }
-
   .surface {
-    position: absolute;
-    inset: 1px;
-    border-radius: inherit;
-    background: var(--button-fill);
     box-shadow: 0 0 0 1px var(--button-ring);
     transition:
       box-shadow 180ms cubic-bezier(0.23, 1, 0.32, 1),
@@ -144,24 +148,6 @@ const trailingIcon = Astro.slots.has("trailing-icon");
     box-shadow: 0 0 0 0 var(--border, #ddd), inset 0 0 0 1px var(--border, #ddd);
   }
 
-  .content,
-  .idle-content {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: inherit;
-  }
-
-  .label {
-    text-box: trim-both cap alphabetic;
-    white-space: nowrap;
-  }
-
-  .icon {
-    display: inline-flex;
-  }
-
   .icon :global(svg) {
     width: 16px;
     height: 16px;
@@ -173,29 +159,20 @@ const trailingIcon = Astro.slots.has("trailing-icon");
     stroke-width: 2;
   }
 
-  .fluid-button[data-leading-icon="true"] { padding-left: 10px; }
-  .fluid-button[data-trailing-icon="true"] { padding-right: 10px; }
-  .fluid-button[data-size="compact"] { height: 28px; padding: 0 12px; gap: 4px; font-size: 12px; }
-  .fluid-button[data-size="compact"][data-leading-icon="true"] { padding-left: 6px; }
-  .fluid-button[data-size="compact"][data-trailing-icon="true"] { padding-right: 6px; }
-  .fluid-button[data-size="icon"] { width: 36px; padding: 0; }
-  .fluid-button[data-size="icon-compact"] { width: 28px; height: 28px; padding: 0; }
   .fluid-button[data-size="compact"] .icon :global(svg),
   .fluid-button[data-size="icon-compact"] .icon :global(svg) { width: 14px; height: 14px; }
 
-  .spinner {
+  .fluid-button[data-feedback="false"][data-loading="true"] .idle-content { opacity: 0; }
+  .fluid-button[data-loading="true"] .spinner { display: flex; }
+  .fluid-button[data-feedback="true"] .content { width: 100%; height: 100%; }
+  .fluid-button[data-feedback="true"] [data-button-icon] {
     position: absolute;
     inset: 0;
-    display: none;
+    display: flex;
     align-items: center;
     justify-content: center;
   }
-
-  .spinner svg { width: 36px; height: 36px; flex-shrink: 0; }
-  .fluid-button[data-size="compact"] .spinner svg,
-  .fluid-button[data-size="icon-compact"] .spinner svg { width: 28px; height: 28px; }
-  .fluid-button[data-loading="true"] .idle-content { opacity: 0; }
-  .fluid-button[data-loading="true"] .spinner { display: flex; }
+  .fluid-button[data-feedback="true"] [data-button-icon][hidden] { display: none; }
   .spinner path { stroke-dasharray: 15 85; }
   .fluid-button[data-loading="true"] .spinner path {
     animation: spinner-move 2s linear infinite, spinner-dash 4s ease-in-out infinite;

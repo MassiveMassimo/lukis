@@ -31,6 +31,7 @@ export interface ImageProcessor {
   ): Promise<ImageDimensions | null>;
   render(strength: number, brush: number): Promise<void>;
   snapshot(canvas: HTMLCanvasElement): Promise<void>;
+  exportPng(): Promise<Blob>;
   download(filename: string): Promise<void>;
   clear(): void;
   dispose(): void;
@@ -89,6 +90,14 @@ export async function createImageProcessor(
   function healthy() {
     if (disposed) throw new Error("The image processor was closed.");
     if (failure) throw failure;
+  }
+  async function png(): Promise<Blob> {
+    if (!current) throw new Error("There is no image to export.");
+    const output = document.createElement("canvas");
+    await readCanvas(current, output);
+    const blob = await canvasToPngBlob(output);
+    healthy();
+    return blob;
   }
   function enqueue<T>(action: () => Promise<T>): Promise<T> {
     const next = pending.then(() => {
@@ -248,13 +257,12 @@ export async function createImageProcessor(
         if (current) await readCanvas(current, output);
       });
     },
+    exportPng() {
+      return enqueue(png);
+    },
     download(filename) {
       return enqueue(async () => {
-        if (!current) return;
-        const output = document.createElement("canvas");
-        await readCanvas(current, output);
-        const blob = await canvasToPngBlob(output);
-        healthy();
+        const blob = await png();
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;

@@ -1,6 +1,8 @@
-import { animate, spring } from "animejs";
+import { animate } from "animejs";
 import { play } from "cuelume";
-import { reducedMotion } from "./motion";
+import "number-flow";
+import type NumberFlow from "number-flow";
+import { MESSAGE_EASE, reducedMotion, springTransition } from "./motion";
 
 const clamp = (value: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, value));
 
@@ -8,6 +10,7 @@ export function createSlider(element: HTMLElement, onChange: (value: number) => 
   const track = element.querySelector<HTMLElement>(".slider-track")!;
   const label = element.querySelector<HTMLElement>(".slider-label")!;
   const display = element.querySelector<HTMLElement>(".slider-value")!;
+  const numberFlow = display.querySelector<NumberFlow>("number-flow")!;
   const handle = element.querySelector<HTMLElement>(".slider-handle")!;
   const min = Number(element.getAttribute("aria-valuemin"));
   const max = Number(element.getAttribute("aria-valuemax"));
@@ -20,8 +23,19 @@ export function createSlider(element: HTMLElement, onChange: (value: number) => 
     1,
   ];
   let value = Number(element.getAttribute("aria-valuenow"));
+  const fractionDigits = step < 1 ? 1 : 0;
+  numberFlow.locales = "en-US";
+  numberFlow.format = {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  };
+  numberFlow.numberSuffix = element.dataset.suffix ?? "";
+  numberFlow.update(value);
   const visual = { fill: ((value - min) / (max - min)) * 100, stretch: 0 };
   let animation: ReturnType<typeof animate> | undefined;
+  let handleAnimation: ReturnType<typeof animate> | undefined;
+  let handleTarget = "";
+  const handleVisual = { opacity: 0, scaleX: 0.25, scaleY: 1 };
   let pointer: { id: number; x: number; y: number; rect: DOMRect; dragged: boolean } | undefined;
   let disabled = false,
     hovered = false,
@@ -31,6 +45,10 @@ export function createSlider(element: HTMLElement, onChange: (value: number) => 
     rightThreshold = 100;
   const controller = new AbortController();
   const signal = controller.signal;
+  function paintHandle() {
+    handle.style.opacity = String(handleVisual.opacity);
+    handle.style.transform = `translateY(-50%) scale(${handleVisual.scaleX}, ${handleVisual.scaleY})`;
+  }
   function paint() {
     track.style.setProperty("--fill", `${visual.fill}%`);
     track.style.width = `calc(100% + ${Math.abs(visual.stretch)}px)`;
@@ -38,9 +56,38 @@ export function createSlider(element: HTMLElement, onChange: (value: number) => 
     const active = (hovered || focused || !!pointer) && !disabled;
     element.dataset.active = String(active);
     element.dataset.dragging = String(!!pointer);
+    element.dataset.keyboardFocus = String(focused && !pointer && !disabled);
     const collision = visual.fill < leftThreshold || visual.fill > rightThreshold;
-    handle.style.opacity = active ? String(collision ? 0.1 : pointer ? 0.8 : 0.5) : "0";
-    handle.style.transform = `scale(${active ? 1 : 0.25}, ${collision ? 0.75 : 1})`;
+    const opacity = active ? (collision ? 0.1 : pointer?.dragged ? 0.8 : 0.5) : 0;
+    const scaleX = active ? 1 : 0.25;
+    const scaleY = active && collision ? 0.75 : 1;
+    const target = `${opacity}:${scaleX}:${scaleY}:${reducedMotion()}`;
+    if (target === handleTarget) return;
+    handleTarget = target;
+    handleAnimation?.cancel();
+    if (reducedMotion()) {
+      Object.assign(handleVisual, { opacity, scaleX, scaleY });
+      paintHandle();
+    } else {
+      handleAnimation = animate(handleVisual, {
+        opacity: { to: opacity, duration: 150, ease: MESSAGE_EASE },
+        scaleX: {
+          to: scaleX,
+          ...springTransition(
+            { type: "spring", visualDuration: 0.25, bounce: 0.15 },
+            { settle: true, distance: scaleX - handleVisual.scaleX },
+          ),
+        },
+        scaleY: {
+          to: scaleY,
+          ...springTransition(
+            { type: "spring", visualDuration: 0.2, bounce: 0.1 },
+            { settle: true, distance: scaleY - handleVisual.scaleY },
+          ),
+        },
+        onUpdate: paintHandle,
+      });
+    }
   }
   function measure() {
     const width = element.clientWidth;
@@ -59,7 +106,7 @@ export function createSlider(element: HTMLElement, onChange: (value: number) => 
     if (rounded === value) return;
     value = rounded;
     const text = `${step < 1 ? value.toFixed(1) : value}${element.dataset.suffix}`;
-    display.textContent = text;
+    numberFlow.update(value);
     element.setAttribute("aria-valuenow", String(value));
     element.setAttribute("aria-valuetext", text);
     onChange(value);
@@ -70,11 +117,27 @@ export function createSlider(element: HTMLElement, onChange: (value: number) => 
   }
   function settle() {
     animation?.cancel();
+    const fill = ((value - min) / (max - min)) * 100;
+    if (reducedMotion()) {
+      Object.assign(visual, { fill, stretch: 0 });
+      paint();
+      return;
+    }
     animation = animate(visual, {
-      fill: ((value - min) / (max - min)) * 100,
-      stretch: 0,
-      ease: reducedMotion() ? "linear" : spring({ stiffness: 300, damping: 25, mass: 0.8 }),
-      ...(reducedMotion() ? { duration: 0 } : {}),
+      fill: {
+        to: fill,
+        ...springTransition(
+          { type: "spring", stiffness: 300, damping: 25, mass: 0.8 },
+          { settle: true, distance: fill - visual.fill },
+        ),
+      },
+      stretch: {
+        to: 0,
+        ...springTransition(
+          { type: "spring", visualDuration: 0.35, bounce: 0.15 },
+          { settle: true, distance: visual.stretch },
+        ),
+      },
       onUpdate: paint,
     });
   }
@@ -116,8 +179,9 @@ export function createSlider(element: HTMLElement, onChange: (value: number) => 
       const x = event.clientX - pointer.rect.left;
       visual.fill = clamp((x / pointer.rect.width) * 100, 0, 100);
       const distance = x < 0 ? x : x > pointer.rect.width ? x - pointer.rect.width : 0;
-      visual.stretch =
-        Math.sign(distance) * 8 * Math.sqrt(clamp((Math.abs(distance) - 32) / 200, 0, 1));
+      visual.stretch = reducedMotion()
+        ? 0
+        : Math.sign(distance) * 8 * Math.sqrt(clamp((Math.abs(distance) - 32) / 200, 0, 1));
       update(min + (visual.fill / 100) * (max - min));
       paint();
     },
@@ -203,6 +267,18 @@ export function createSlider(element: HTMLElement, onChange: (value: number) => 
     },
     { signal },
   );
+  matchMedia("(prefers-reduced-motion: reduce)").addEventListener(
+    "change",
+    () => {
+      if (reducedMotion()) {
+        animation?.complete();
+        visual.stretch = 0;
+      }
+      paint();
+    },
+    { signal },
+  );
+  paintHandle();
   paint();
   return {
     get value() {
@@ -218,7 +294,9 @@ export function createSlider(element: HTMLElement, onChange: (value: number) => 
     destroy() {
       release();
       animation?.cancel();
+      handleAnimation?.cancel();
       observer.disconnect();
+      numberFlow.animated = false;
       controller.abort();
     },
   };

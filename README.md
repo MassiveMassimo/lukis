@@ -41,21 +41,22 @@ bytes in the local comparison. Interaction times were similar. See the
 
 ## Hosting
 
-`pnpm build` writes the static site to `dist/`. Vercel needs the Astro preset,
-Node.js 24, and the pinned pnpm version. No package registry token or image
-processing server is required.
+`pnpm build` writes the static site to `dist/`. Cloudflare Workers Static Assets
+serves that directory without a Worker script or Astro SSR adapter. Image
+processing stays in the browser. No package registry token is required.
 
-The personal Vercel project `lukis` exists in `massivemassimos-projects` and this
-checkout is linked to it. It uses the Astro preset and has no project environment
-variables. Local validation is complete. The GitHub move to `MassiveMassimo/lukis`
-and production deployment are pending the decision about historical file
-contents. The previous hosted version remains unchanged.
+Use Node.js 24 and the pinned pnpm version. Sign in with `pnpm exec wrangler login`,
+then run `pnpm deploy:check` to validate the upload or `pnpm deploy` to publish.
+The Cloudflare account and Worker name are set in `wrangler.jsonc`.
+
+The dedicated checkout is `/Users/imo/Documents/GitHub/lukis`. Its remote is the
+private [MassiveMassimo/lukis](https://github.com/MassiveMassimo/lukis) repository.
+See [the migration status](docs/migration.md) for verified publication status.
 
 ## Reference and recovery
 
-The previous Next.js and Motion version is preserved by tag
-`archive/nextjs-motion-2026-09-06`. A separate local worktree and a complete
-Git bundle are available at:
+The previous Next.js and Motion version, including its original history and
+archive tag, is preserved in a separate local worktree and complete Git bundle:
 
 - `/Users/imo/Documents/GitHub/lukis-nextjs-reference`
 - `/Users/imo/Documents/GitHub/lukis-nextjs-reference.bundle`

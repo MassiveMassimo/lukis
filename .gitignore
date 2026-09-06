@@ -4,6 +4,7 @@
 .next/
 .astro/
 .vercel/
+.wrangler/
 dist/
 node_modules/
 out/

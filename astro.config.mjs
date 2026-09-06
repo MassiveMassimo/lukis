@@ -6,7 +6,7 @@ export default defineConfig({
   devToolbar: { enabled: false },
   vite: {
     cacheDir: ".astro/vite",
-    optimizeDeps: { include: ["animejs", "cuelume", "dialkit/vanilla", "vgpu"] },
+    optimizeDeps: { include: ["animejs", "cuelume", "dialkit/vanilla", "number-flow", "vgpu"] },
     plugins: [tailwindcss()],
     css: { postcss: { plugins: [] } },
   },

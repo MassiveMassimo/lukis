@@ -1,15 +1,19 @@
 ---
+import { renderInnerHTML } from "number-flow";
+
 interface Props { label: string; value: number; min: number; max: number; step: number; notches: number[]; suffix?: string }
 const { label, value, min, max, step, notches, suffix = "" } = Astro.props;
 const percent = (value - min) / (max - min) * 100;
 const formatted = step < 1 ? value.toFixed(1) : String(value);
+const fractionDigits = step < 1 ? 1 : 0;
+const format = { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits };
 ---
-<div class="elastic-slider" data-slot="elastic-slider" role="slider" tabindex="0" aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={value} aria-valuetext={`${formatted}${suffix}`} data-step={step} data-suffix={suffix}>
-  <div class="slider-track" data-slot="elastic-slider-track" style={`--fill:${percent}%`}>
-    <span class="slider-fill" data-slot="elastic-slider-fill"></span>
-    <span class="slider-marks" aria-hidden="true">{notches.map((notch) => <span data-notch-value={notch} style={`left:${(notch - min) / (max - min) * 100}%`}></span>)}</span>
-    <span class="slider-label" data-slot="elastic-slider-label">{label}</span>
-    <span class="slider-value" data-slot="elastic-slider-value">{formatted}{suffix}</span>
-    <span class="slider-handle" data-slot="elastic-slider-handle" aria-hidden="true"></span>
+<div class="elastic-slider group/slider relative h-9 w-full cursor-ew-resize touch-none select-none rounded-control outline-none data-[keyboard-focus=true]:focus-visible:outline-2 data-[keyboard-focus=true]:focus-visible:outline-offset-2 data-[keyboard-focus=true]:focus-visible:outline-solid data-[keyboard-focus=true]:focus-visible:outline-focus-ring aria-disabled:cursor-not-allowed" data-slot="elastic-slider" role="slider" tabindex="0" aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={value} aria-valuetext={`${formatted}${suffix}`} data-step={step} data-suffix={suffix}>
+  <div class="slider-track relative h-9 w-full overflow-hidden rounded-control bg-muted" data-slot="elastic-slider-track" style={`--fill:${percent}%`}>
+    <span class="slider-fill absolute inset-y-0 left-0 w-(--fill) bg-muted-foreground/10 transition-[background-color] duration-200 ease-[ease] group-data-[active=true]/slider:bg-muted-foreground/20 motion-reduce:transition-none" data-slot="elastic-slider-fill"></span>
+    <span class="slider-marks" aria-hidden="true">{notches.map((notch) => <span data-notch-value={notch} class="absolute top-1/2 h-2 w-px rounded-full bg-muted-foreground opacity-0 [transform:translate(-50%,-50%)] transition-opacity duration-200 ease-[ease] group-data-[active=true]/slider:opacity-30 motion-reduce:transition-none" style={`left:${(notch - min) / (max - min) * 100}%`}></span>)}</span>
+    <span class="slider-label absolute top-0 left-3 flex h-9 items-center text-[13px] font-medium text-muted-foreground" data-slot="elastic-slider-label">{label}</span>
+    <span class="slider-value absolute top-0 right-3 flex h-9 items-center text-[13px] font-medium text-muted-foreground tabular-nums group-data-[active=true]/slider:text-foreground" data-slot="elastic-slider-value" aria-hidden="true"><number-flow set:html={renderInnerHTML(value, { locales: "en-US", format, numberSuffix: suffix })} /></span>
+    <span class="slider-handle absolute top-1/2 left-[max(4px,calc(var(--fill)-8px))] h-5 w-1 rounded-[2px] bg-foreground opacity-0 [transform:translateY(-50%)_scale(0.25,1)] motion-reduce:transition-none" data-slot="elastic-slider-handle" aria-hidden="true"></span>
   </div>
 </div>

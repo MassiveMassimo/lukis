@@ -1,0 +1,62 @@
+---
+import FrameGuides from "./FrameGuides.astro";
+import Logo from "./Logo.astro";
+import Upload from "@tabler/icons/outline/upload.svg";
+import Alert from "@tabler/icons/outline/alert-circle.svg";
+---
+<div class="preview-stage relative grid grid-cols-1 place-items-center py-2">
+  <FrameGuides />
+  <div class="logo-frame pointer-events-none fixed top-[calc(50%-0.5rem)] left-1/2 z-3 h-72 w-(--empty-width) [transform:translate(-50%,-50%)] compact:h-60" aria-hidden="true">
+    <Logo class="dropzone-monogram absolute -top-12 left-1/2 h-[81.6px] w-27 opacity-32 [transform:translateX(-50%)_rotate(-7deg)] [--logo-top:#000] [--logo-bottom:#595959] dark:[--logo-top:#dfdfdf] dark:[--logo-bottom:#a3a3a3] mask-linear-180 mask-linear-from-30% mask-linear-to-100%" />
+  </div>
+  <div class="canvas-frame pointer-events-none relative isolate z-4 h-72 w-full compact:h-60">
+    <button class="image-bounds dropzone pointer-events-auto absolute inset-0 grid cursor-pointer appearance-none overflow-hidden border-0 bg-[color-mix(in_srgb,var(--background)_40%,transparent)] p-0 outline-none backdrop-blur-[8px] disabled:cursor-wait" type="button" aria-label="Turn an image into a painting" aria-describedby="image-requirements">
+      <span class="reference-frame pointer-events-none absolute top-1/2 left-1/2 h-72 w-(--empty-width) [transform:translate(-50%,-50%)] compact:h-60" aria-hidden="true">
+        <span class="dropzone-reference absolute inset-0 bg-[url('/window-reference-painterly.webp')] bg-cover bg-position-[center_46%] opacity-0 [transform:scale(0.94)] [filter:var(--monochrome-filter)]"></span>
+      </span>
+      <span class="canvas-clip pointer-events-none absolute inset-0 grid size-full min-h-0 transform-none bg-background opacity-0 [filter:none]" aria-hidden="true">
+        <span class="canvas-surface pointer-events-none relative grid size-full min-h-0 blur-[4px]">
+          <canvas id="preview" class="absolute inset-0 block size-full min-h-0 min-w-0 object-cover" aria-label="Painterly processed image preview"></canvas>
+        </span>
+      </span>
+    </button>
+  </div>
+  <span class="outgoing-bounds pointer-events-none absolute top-2 left-1/2 z-4 overflow-hidden [transform:translateX(-50%)]" aria-hidden="true">
+    <span class="outgoing-image block size-full bg-background opacity-0"><canvas id="outgoing" class="block size-full object-cover"></canvas></span>
+  </span>
+  <span class="message-chrome pointer-events-none absolute top-2 left-1/2 z-5 grid h-72 w-full content-center justify-items-center gap-2 px-4 text-center [transform:translateX(-50%)] data-[error=true]:text-destructive compact:h-60" aria-hidden="false">
+    <span class="message-icon relative grid size-9 place-items-center text-muted-foreground" aria-hidden="true">
+      <span data-message-icon="upload" class="col-start-1 row-start-1 grid size-9 place-items-center"><Upload class="size-4.5 stroke-[1.5]" /></span>
+      <span data-message-icon="error" class="col-start-1 row-start-1 grid size-9 place-items-center text-destructive" hidden><Alert class="size-4.5 stroke-[1.5]" /></span>
+    </span>
+    <span class="message-copy grid w-full max-w-lg min-w-0 gap-0.5">
+      <span class="message-heading relative block min-w-0"><strong data-message-text aria-hidden="true">Turn an image into a painting</strong></span>
+      <small id="image-requirements" class="text-xs leading-[1.4] text-muted-foreground">Drop an image or browse<br />PNG, JPEG, WebP · max 25 MB · output up to 1600px</small>
+    </span>
+  </span>
+</div>
+
+<style>
+  .preview-stage { --empty-width: min(calc(100vw - var(--page-padding) * 2), 56rem); }
+  .dropzone-reference {
+    mask-image:
+      linear-gradient(to right, transparent, black 12%, black 88%, transparent),
+      linear-gradient(to bottom, transparent, black 20%, black 80%, transparent);
+    mask-composite: intersect;
+  }
+  /* app.ts creates message nodes during a crossfade. Scope their selectors to
+     this component's stable parent instead of requiring generated attributes. */
+  .message-heading :global([data-message-text]) {
+    display: block;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.4;
+    overflow-wrap: break-word;
+    color: var(--foreground);
+  }
+  .message-heading :global([data-message-text][data-error="true"]) { color: var(--destructive); }
+  .message-heading :global([data-message-text][data-exiting="true"]) {
+    position: absolute;
+    inset: 0 0 auto;
+  }
+</style>

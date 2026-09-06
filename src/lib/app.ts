@@ -3,12 +3,15 @@ import { play, setEnabled, setVolume } from "cuelume";
 import type { TransitionConfig } from "dialkit/vanilla";
 import type { ImageProcessor } from "./processor";
 import type { ImageDimensions } from "./image";
-import { setButtonLoading } from "./button";
+import { createButtonFeedback } from "./button";
+import { createIconSwap } from "./icon-swap";
 import { createSlider } from "./slider";
 import {
   BOUNDS_TRANSITION,
   REVEAL_TRANSITION,
   HOVER_EASE,
+  MESSAGE_EASE,
+  FADE_EASE,
   getRevealTiming,
   reducedMotion,
   transition,
@@ -31,8 +34,11 @@ export function mountApp() {
     surface = get(".canvas-surface");
   const outgoingBounds = get(".outgoing-bounds"),
     outgoingImage = get(".outgoing-image");
-  const messageChrome = get(".message-chrome"),
-    messageText = get("[data-message-text]");
+  const messageChrome = get(".message-chrome");
+  let messageText = get("[data-message-text]");
+  const textAnimations = new Map<HTMLElement, ReturnType<typeof animate>>();
+  const iconSwap = createIconSwap();
+  const selectIcon = iconSwap.select;
   const requirements = get("#image-requirements"),
     reference = get(".dropzone-reference"),
     logo = get(".logo-frame");
@@ -42,6 +48,12 @@ export function mountApp() {
   const rows = [...controls.children] as HTMLElement[];
   const restartButton = get<HTMLButtonElement>("#restart"),
     downloadButton = get<HTMLButtonElement>("#download");
+  const copyButton = get<HTMLButtonElement>("#copy");
+  const clipboardSupported =
+    typeof ClipboardItem !== "undefined" && typeof navigator.clipboard?.write === "function";
+  if (!clipboardSupported) copyButton.title = "Image copying is unavailable. Use Download PNG.";
+  const downloadFeedback = createButtonFeedback(downloadButton);
+  const copyFeedback = createButtonFeedback(copyButton);
   const themeButton = get<HTMLButtonElement>("#theme");
   const abort = new AbortController(),
     signal = abort.signal;
@@ -70,6 +82,8 @@ export function mountApp() {
     hoverAnimation: ReturnType<typeof animate> | undefined;
   let referenceAnimation: ReturnType<typeof animate> | undefined,
     messageAnimation: ReturnType<typeof animate> | undefined;
+  let monochromeAnimation: ReturnType<typeof animate> | undefined;
+  let monochromeTarget: string | undefined;
   let renderPending = false,
     renderTask: Promise<void> | undefined;
   let dialCleanup: (() => void) | undefined, dialElement: HTMLElement | undefined;
@@ -164,6 +178,7 @@ export function mountApp() {
     dropzone.disabled = busy || processorStarting || !!fatal;
     restartButton.disabled = busy || !file || !!fatal;
     downloadButton.disabled = busy || !file || !!fatal;
+    copyButton.disabled = busy || !file || !!fatal || !clipboardSupported;
     controls.inert = busy || !revealed || !!fatal;
     paintSlider.setDisabled(busy || !!fatal);
     brushSlider.setDisabled(busy || !!fatal);
@@ -182,13 +197,90 @@ export function mountApp() {
     syncBusy();
     updateMessage();
   }
+  function changeMessage(text: string) {
+    if (messageText.textContent === text) return;
+    const previous = messageText;
+    const parent = previous.parentElement!;
+    const existing = [...parent.querySelectorAll<HTMLElement>("[data-message-text]")].find(
+      (node) => node.textContent === text,
+    );
+    messageText = existing ?? document.createElement("strong");
+    if (!existing) {
+      messageText.dataset.messageText = "";
+      messageText.setAttribute("aria-hidden", "true");
+      messageText.textContent = text;
+      Object.assign(messageText.style, {
+        opacity: "0",
+        transform: reducedMotion() ? "translateY(0px)" : "translateY(16px)",
+        filter: reducedMotion() ? "blur(0px)" : "blur(2px)",
+      });
+    }
+    messageText.dataset.error = String(!!error);
+    delete messageText.dataset.exiting;
+    parent.prepend(messageText);
+    previous.dataset.exiting = "true";
+    cancel(textAnimations.get(previous));
+    cancel(textAnimations.get(messageText));
+    const exit = motion(previous, {
+      opacity: 0,
+      translateY: reducedMotion() ? 0 : -16,
+      filter: reducedMotion() ? "blur(0px)" : "blur(2px)",
+      duration: reducedMotion() ? 0 : 300,
+      ease: MESSAGE_EASE,
+      onComplete: () => {
+        previous.remove();
+        textAnimations.delete(previous);
+      },
+    });
+    // Zero-duration exits finish synchronously and have already removed the node.
+    if (!exit.completed) textAnimations.set(previous, exit);
+    const incoming = messageText;
+    const enter = motion(incoming, {
+      opacity: 1,
+      translateY: 0,
+      filter: "blur(0px)",
+      duration: reducedMotion() ? 0 : 300,
+      delay: reducedMotion() || existing ? 0 : 100,
+      ease: MESSAGE_EASE,
+      onComplete: () => textAnimations.delete(incoming),
+    });
+    if (!enter.completed) textAnimations.set(incoming, enter);
+  }
+  function updateMonochrome() {
+    const monochrome = !!file && (dragging || !!error);
+    const theme = getComputedStyle(document.documentElement);
+    const opacity = monochrome ? Number(theme.getPropertyValue("--monochrome-opacity")) : 1;
+    const filter = monochrome
+      ? theme.getPropertyValue("--monochrome-filter").trim()
+      : "grayscale(0) brightness(1) contrast(1)";
+    const target = `${opacity}:${filter}`;
+    if (target === monochromeTarget) return;
+    const colorMask =
+      "linear-gradient(to right,transparent,black 0%,black 100%,transparent),linear-gradient(to bottom,transparent,black 0%,black 100%,transparent)";
+    const maskImage = monochrome
+      ? "linear-gradient(to right,transparent,black 12%,black 88%,transparent),linear-gradient(to bottom,transparent,black 20%,black 80%,transparent)"
+      : colorMask;
+    const initial = monochromeTarget === undefined;
+    monochromeTarget = target;
+    cancel(monochromeAnimation);
+    if (!canvas.style.maskImage || canvas.style.maskImage === "none")
+      canvas.style.maskImage = colorMask;
+    canvas.style.maskComposite = "intersect";
+    monochromeAnimation = motion(canvas, {
+      opacity,
+      filter,
+      maskImage,
+      duration: initial || reducedMotion() ? 0 : 600,
+      ease: HOVER_EASE,
+      onComplete: () => {
+        if (!monochrome) canvas.style.maskImage = "none";
+      },
+    });
+  }
   function updateMessage() {
     const shown = !previewVisible || dragging || !!error;
-    const text =
-      error ??
-      (hasRevealedImage ? "Drop to replace" : "Drop or browse an image to make it painterly");
+    const text = error ?? (hasRevealedImage ? "Drop to replace" : "Turn an image into a painting");
     messageChrome.dataset.error = String(!!error);
-    messageText.dataset.error = String(!!error);
     messageChrome.setAttribute("aria-hidden", String(!shown));
     requirements.hidden = hasRevealedImage;
     cancel(messageAnimation);
@@ -198,37 +290,12 @@ export function mountApp() {
       duration: reducedMotion() ? 0 : 180,
       ease: cubicBezier(0.4, 0, 1, 1),
     });
-    if (messageText.textContent !== text) {
-      messageText.textContent = text;
-      motion(messageText, {
-        opacity: [0, 1],
-        translateY: [reducedMotion() ? 0 : 16, 0],
-        filter: [reducedMotion() ? "blur(0px)" : "blur(2px)", "blur(0px)"],
-        duration: reducedMotion() ? 0 : 300,
-        delay: reducedMotion() ? 0 : 100,
-      });
-    }
+    changeMessage(text);
     for (const icon of document.querySelectorAll<HTMLElement>("[data-message-icon]")) {
       const selected = icon.dataset.messageIcon === (error ? "error" : "upload");
-      if (icon.hidden && selected) {
-        icon.hidden = false;
-        motion(icon, {
-          opacity: [0, 1],
-          scale: [reducedMotion() ? 1 : 0.25, 1],
-          filter: [reducedMotion() ? "blur(0px)" : "blur(4px)", "blur(0px)"],
-          duration: reducedMotion() ? 0 : 300,
-        });
-      } else if (!selected) icon.hidden = true;
+      selectIcon(icon, selected, 300);
     }
-    const monochrome = !!file && (dragging || !!error);
-    canvas.style.opacity = monochrome ? "var(--monochrome-opacity)" : "1";
-    canvas.style.filter = monochrome
-      ? "var(--monochrome-filter)"
-      : "grayscale(0) brightness(1) contrast(1)";
-    canvas.style.maskImage = monochrome
-      ? "linear-gradient(to right,transparent,black 12%,black 88%,transparent),linear-gradient(to bottom,transparent,black 20%,black 80%,transparent)"
-      : "none";
-    canvas.style.maskComposite = "intersect";
+    updateMonochrome();
   }
   function updateHover() {
     const expanded = !busy && (dragging || (!file && hovered));
@@ -283,20 +350,23 @@ export function mountApp() {
   async function revealImage() {
     const bounds = transition(boundsConfig),
       reveal = transition(revealConfig);
-    const { duration, delay } = getRevealTiming(bounds.duration, reveal.duration);
+    const { duration, delay } = reducedMotion()
+      ? { duration: 120, delay: 0 }
+      : getRevealTiming(bounds.duration, reveal.duration);
+    const ease = reducedMotion() ? FADE_EASE : reveal.ease;
     clip.setAttribute("aria-hidden", "false");
     motion(surface, {
       filter: [reducedMotion() ? "blur(0px)" : "blur(4px)", "blur(0px)"],
       duration,
       delay,
-      ease: reveal.ease,
+      ease,
     });
     motion(outgoingImage, {
       opacity: 0,
       filter: reducedMotion() ? "blur(0px)" : "blur(4px)",
       duration,
       delay,
-      ease: reveal.ease,
+      ease,
       onComplete: clearOutgoing,
     });
     if (!hasRevealedImage)
@@ -309,7 +379,7 @@ export function mountApp() {
           ease: HOVER_EASE,
         }),
       );
-    await motion(clip, { opacity: [0, 1], duration, delay, ease: reveal.ease });
+    await motion(clip, { opacity: [0, 1], duration, delay, ease });
     if (disposed) return;
     revealed = hasRevealedImage = true;
     busy = false;
@@ -352,6 +422,8 @@ export function mountApp() {
         );
         if (!next || !isCurrent()) return;
         file = nextFile;
+        downloadFeedback.setState("idle");
+        copyFeedback.setState("idle");
         dimensions = next;
         uploading = false;
         previewVisible = true;
@@ -482,36 +554,66 @@ export function mountApp() {
     },
     { signal },
   );
-  downloadButton.addEventListener(
-    "click",
-    async () => {
-      if (busy || !file || !processor) return;
-      busy = true;
-      setButtonLoading(downloadButton, true);
-      syncBusy();
-      play("press");
-      try {
+  async function exportImage(action: "download" | "copy") {
+    if (busy || !file || !processor || (action === "copy" && !clipboardSupported)) return;
+    const imageProcessor = processor;
+    const filename = file.name.replace(/\.[^.]+$/, "");
+    const feedback = action === "copy" ? copyFeedback : downloadFeedback;
+    busy = true;
+    feedback.setState("loading");
+    syncBusy();
+    play("press");
+    try {
+      const prepared = (async () => {
         await renderTask;
-        await processor.render(paintSlider.value / 100, brushSlider.value);
-        await processor.download(file.name.replace(/\.[^.]+$/, ""));
-        play("success", { volume: 0.65 });
-        status.textContent = "Painterly PNG download started.";
-      } catch (cause) {
-        console.error(cause);
-        play("error");
-        showError(fatal ?? "The PNG could not be downloaded. Try again.");
-      } finally {
+        await imageProcessor.render(paintSlider.value / 100, brushSlider.value);
+      })();
+      if (action === "copy") {
+        const png = prepared.then(() => imageProcessor.exportPng());
+        try {
+          // Start the write inside the click gesture. Safari accepts a promised PNG.
+          await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+        } finally {
+          // Keep controls locked until encoding ends, even if permission is denied early.
+          await png;
+        }
+      } else {
+        await prepared;
+        await imageProcessor.download(filename);
+      }
+      if (disposed) return;
+      feedback.setState("success");
+      play("success", { volume: 0.65 });
+      status.textContent =
+        action === "copy"
+          ? "Painterly PNG copied to clipboard."
+          : "Painterly PNG download started.";
+    } catch (cause) {
+      if (disposed) return;
+      console.error(cause);
+      feedback.setState("idle");
+      play("error");
+      showError(
+        fatal ??
+          (action === "copy"
+            ? "The image could not be copied. Allow clipboard access or download the PNG."
+            : "The PNG could not be downloaded. Try again."),
+      );
+    } finally {
+      if (!disposed) {
         busy = false;
-        setButtonLoading(downloadButton, false);
         syncBusy();
       }
-    },
-    { signal },
-  );
+    }
+  }
+  downloadButton.addEventListener("click", () => void exportImage("download"), { signal });
+  copyButton.addEventListener("click", () => void exportImage("copy"), { signal });
   restartButton.addEventListener(
     "click",
     async () => {
       if (busy || !file || !processor) return;
+      downloadFeedback.setState("idle");
+      copyFeedback.setState("idle");
       busy = true;
       syncBusy();
       play("droplet", { volume: 0.65 });
@@ -540,7 +642,7 @@ export function mountApp() {
         clip.style.opacity = "0";
         clip.setAttribute("aria-hidden", "true");
         delete frame.dataset.hasFile;
-        dropzone.setAttribute("aria-label", "Drop or browse an image to make it painterly");
+        dropzone.setAttribute("aria-label", "Turn an image into a painting");
         dropzone.setAttribute("aria-describedby", "image-requirements");
         moveBounds();
         const timing = transition(boundsConfig);
@@ -575,17 +677,7 @@ export function mountApp() {
     themeButton.setAttribute("aria-label", description);
     themeButton.title = description;
     for (const icon of document.querySelectorAll<HTMLElement>("[data-theme-icon]")) {
-      if (icon.dataset.themeIcon === theme) {
-        if (icon.hidden) {
-          icon.hidden = false;
-          motion(icon, {
-            opacity: [0, 1],
-            scale: [reducedMotion() ? 1 : 0.25, 1],
-            filter: [reducedMotion() ? "blur(0px)" : "blur(4px)", "blur(0px)"],
-            duration: reducedMotion() ? 120 : 300,
-          });
-        }
-      } else icon.hidden = true;
+      selectIcon(icon, icon.dataset.themeIcon === theme);
     }
     if (dialElement) dialElement.dataset.theme = resolved;
     updateHover();
@@ -680,6 +772,9 @@ export function mountApp() {
     clearTimeout(errorTimer);
     for (const animation of animations) animation.cancel();
     animations.clear();
+    iconSwap.destroy();
+    downloadFeedback.destroy();
+    copyFeedback.destroy();
     paintSlider.destroy();
     brushSlider.destroy();
     unsubscribeTheme();

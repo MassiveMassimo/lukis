@@ -23,7 +23,7 @@ try {
     if (message.type() === "error") errors.push(message.text());
   });
   await page.goto(baseUrl, { waitUntil: "networkidle" });
-  await expect(page).toHaveTitle("Lukis — Make it painterly");
+  await expect(page).toHaveTitle("Lukis — Turn images into paintings");
   await expect(page.locator("html")).toHaveAttribute("data-processor-state", "ready");
   assert.equal(await page.locator(".dialkit-root").count(), 0);
   await page.screenshot({ path: join(directory, "desktop-light.png") });

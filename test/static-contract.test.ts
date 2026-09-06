@@ -7,8 +7,8 @@ const read = (path: string) => readFile(new URL(path, root), "utf8");
 const json = async (path: string) => JSON.parse(await read(path));
 
 test("the hover reference stays within its 300 KB transfer budget", async () => {
-  const stylesheet = await read("src/styles/app.css");
-  const reference = stylesheet.match(/\.dropzone-reference\s*\{[^}]*url\(['"]\/([^'"]+)['"]\)/);
+  const preview = await read("src/components/UploadPreview.astro");
+  const reference = preview.match(/class="dropzone-reference\b[^"\n]*url\('\/([^']+)'\)/);
   assert.ok(reference, "The hover reference must use a local asset.");
   assert.ok((await stat(new URL(`public/${reference[1]}`, root))).size <= 300_000);
 });

@@ -1,0 +1,15 @@
+---
+import Button from "./Button.astro";
+import Desktop from "@tabler/icons/outline/device-desktop.svg";
+import Sun from "@tabler/icons/outline/sun.svg";
+import Moon from "@tabler/icons/outline/moon.svg";
+---
+<div class="theme-controls fixed bottom-4 left-4 z-50">
+  <Button id="theme" label="Theme: System. Switch to Light" variant="ghost" size="icon">
+    <span slot="icon" class="theme-icons relative grid size-5">
+      <span data-theme-icon="system" class="col-start-1 row-start-1 grid place-items-center blur-none"><Desktop /></span>
+      <span data-theme-icon="light" class="col-start-1 row-start-1 grid place-items-center blur-none" hidden><Sun /></span>
+      <span data-theme-icon="dark" class="col-start-1 row-start-1 grid place-items-center blur-none" hidden><Moon /></span>
+    </span>
+  </Button>
+</div>
