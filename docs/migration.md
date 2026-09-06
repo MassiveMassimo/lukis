@@ -79,5 +79,10 @@ Cloudflare Workers Static Assets serves
 account configured in `wrangler.jsonc`. The sanitized history and accepted app
 changes are pushed to personal GitHub. The existing Vercel site remains available
 as a fallback. Git-connected deployment is not configured; use `pnpm deploy`.
+Live Helium checks passed upload, PNG export, themes, mobile layout, and restart,
+with no browser errors. The served HTML, JavaScript, CSS, favicon, and share image
+match the local production build byte-for-byte. Share-image metadata uses the
+Cloudflare URL. Compact screenshots and the smoke result are retained locally
+in `analysis-output/cloudflare-live`.
 For rollback after a successful Cloudflare deployment, use `pnpm exec wrangler
 rollback` to restore a prior version, then repeat the production smoke check.
