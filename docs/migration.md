@@ -1,4 +1,4 @@
-# Lukis migration contract
+# Architecture
 
 Styling uses Tailwind utilities in the owning Astro component. `UploadPreview`
 owns the image layers and messages, `FrameGuides` owns guide effects, `ThemeToggle`
@@ -9,7 +9,9 @@ the `transform` property so CSS individual transforms do not compound Anime.js.
 `global.css` contains Tailwind configuration, semantic theme tokens, document
 defaults, and the document-wide theme transition. `fonts.css` contains font faces.
 
-Move this image editor to a personal Astro project named Lukis. Preserve appearance and behavior except the approved logo, Sunghyun Sans font, and Fluid Functionalism button port. Keep Tabler SVGs and Tailwind v4. Remove React, TSX, Next.js, Motion, current company branding, and company package dependencies.
+Lukis is a static Astro image editor with plain TypeScript, Tabler SVGs,
+Tailwind v4, Sunghyun Sans, and a Fluid Functionalism button port. The production
+application has no React runtime or server-side image processing.
 
 Use Anime.js for DOM motion, vgpu for browser-local image processing, and DialKit vanilla for development tuning. WebGPU is required; show a persistent unsupported-browser message when unavailable. There is no WebGL fallback or server image processing.
 
@@ -46,43 +48,9 @@ same opaque PNG as Download, through the browser clipboard API. Start the clipbo
 write in the click gesture with a promised PNG. Permission or encoding failures
 must restore the action icon and preserve the last valid image for retry.
 
-Validate with existing interaction contracts, new GPU output/pixel checks, browser motion evidence, and before/after measurements. `analysis-output/baseline` contains the initial same-machine, reduced-motion baseline at 800 × 600. Single samples are diagnostic, not general performance claims.
+## Hosting and verification
 
-After local acceptance, publish GitHub to `MassiveMassimo/lukis` and host with
-Cloudflare Workers Static Assets. The static Astro build does not need an SSR
-adapter or Worker script. Verify live ownership and deployment separately.
-Preserve the original source and history locally using the reference worktree,
-archive tag, and standalone bundle described in `astro-button.md`.
-
-Implementation order: GPU proof and exports; Astro UI and motion; interaction/visual/performance acceptance; branding and dependency audit; personal account migration and deployment.
-
-Local acceptance is complete. See [the validation results](validation.md) for
-test coverage, image parity, and measured performance. The current tree has no
-old company branding.
-
-On 6 September 2026, source commit `b502e45` was deployed to the personal Vercel
-project at [lukis-two.vercel.app](https://lukis-two.vercel.app). Vercel reports
-production Ready. Live Helium checks passed upload, PNG export, themes, mobile
-layout, and restart, with no browser errors.
-
-The independent checkout is `/Users/imo/Documents/GitHub/lukis`, on `main`, with
-the private [MassiveMassimo/lukis](https://github.com/MassiveMassimo/lukis) as
-`origin`. The original working checkout remains intact. The personal copy
-retains commit history with explicit former branding sanitized, as approved.
-All reachable file contents, paths, and commit objects passed the branding scan.
-The history rewrite left the current source tree unchanged.
-Historical snapshots may reference renamed packages that no longer resolve.
-Use the untouched local reference and bundle to run the original application.
-
-Cloudflare Workers Static Assets serves
-[lukis.mhmmadjid.workers.dev](https://lukis.mhmmadjid.workers.dev) in the personal
-account configured in `wrangler.jsonc`. The sanitized history and accepted app
-changes are pushed to personal GitHub. The existing Vercel site remains available
-as a fallback. Git-connected deployment is not configured; use `pnpm deploy`.
-Live Helium checks passed upload, PNG export, themes, mobile layout, and restart,
-with no browser errors. The served HTML, JavaScript, CSS, favicon, and share image
-match the local production build byte-for-byte. Share-image metadata uses the
-Cloudflare URL. Compact screenshots and the smoke result are retained locally
-in `analysis-output/cloudflare-live`.
-For rollback after a successful Cloudflare deployment, use `pnpm exec wrangler
-rollback` to restore a prior version, then repeat the production smoke check.
+`pnpm build` produces `dist/` for static hosting. Cloudflare Workers Static Assets
+serves it without a Worker script or Astro SSR adapter. See the README for
+deployment commands and [testing and benchmarks](validation.md) for verification.
+Use the tracked image reference and browser tests to check processing and motion.

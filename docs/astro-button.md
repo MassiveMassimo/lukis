@@ -19,11 +19,3 @@ The Astro build, `astro check`, formatting, lint, and Helium interaction checks 
 The Astro UI uses Sunghyun Sans with Tabler outline SVGs and Tailwind CSS 4.3.3. Tabler SVG imports resolve at build time through `@tabler/icons/outline/<name>.svg`; they do not use the React package. Its MIT notice is in `licenses/tabler-icons.txt`.
 
 Sunghyun Sans is self-hosted under `public/fonts/sunghyun-sans`, pinned to upstream commit `47224e4e2a3a0c628414e25d8b16f5021207f9d1`. The SIL Open Font License and original copyright notices are in `OFL.txt` beside the font files. `src/styles/fonts.css` selects the author's unchanged dynamic subsets for weights 400, 500, and 600. Unicode ranges let the browser fetch only the required character chunks. The regular Latin subset is preloaded; the other files load on demand. `font-sans` maps to Sunghyun Sans in Tailwind's CSS theme.
-
-# Next.js and Motion reference
-
-The pre-migration source is preserved at commit `9edeeb5a7dc4cf2ba2d0bd2725102c2bcfe732b5` by the local annotated tag `archive/nextjs-motion-2026-09-06`. A separate detached worktree is at `/Users/imo/Documents/GitHub/lukis-nextjs-reference`. It contains the complete tracked source and original lockfile. Dependencies and build artifacts are not copied.
-
-For a fresh reference checkout, run `git worktree add --detach <reference-directory> archive/nextjs-motion-2026-09-06`, then `pnpm install --frozen-lockfile` in that directory. Use Node 24 and pnpm 11.1.1 as recorded in its package manifest. Do not merge the reference into the Astro branch. The tag and worktree are local; neither has been pushed.
-
-A standalone backup at `/Users/imo/Documents/GitHub/lukis-nextjs-reference.bundle` also contains the complete Git history reachable from this tag. `git bundle verify` passed. It can restore the reference even if the working repository is unavailable: `git clone --branch archive/nextjs-motion-2026-09-06 /Users/imo/Documents/GitHub/lukis-nextjs-reference.bundle <restore-directory>`.

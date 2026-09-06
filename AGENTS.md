@@ -10,5 +10,5 @@
 - Keep image replacement transactional. A failed replacement must preserve the last valid export.
 - Preserve keyboard and pointer slider input, reduced motion, theme persistence, and image proportions during motion.
 - Run `pnpm check` and `pnpm test:browser`. Browser tests use Helium with isolated profiles.
-- Use the saved Next.js/Motion reference for visual comparisons. See `docs/migration.md`.
-- Keep deployment status explicit. Local changes do not prove a personal-account transfer or deployment.
+- Use the tracked reference renderer in `test/fixtures/painterly-reference.ts` for image comparisons and the browser tests for motion contracts. See `docs/validation.md`.
+- Keep deployment status explicit. Local checks do not prove a production deployment.

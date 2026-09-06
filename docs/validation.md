@@ -1,114 +1,66 @@
-# Astro migration validation
+# Testing and benchmarks
 
-Validated on 6 September 2026 with Node.js 24, pnpm 11.1.1, and Helium on macOS.
-The comparison source is the local `archive/nextjs-motion-2026-09-06` tag.
+Use Node.js 24 and pnpm 11.1.1. Browser and GPU tests currently require Helium at
+`/Applications/Helium.app/Contents/MacOS/Helium` on macOS and a hardware WebGPU
+adapter for GPU verification.
 
-## Runtime and image checks
+`pnpm check` runs formatting, lint, Astro checking, unit and browser tests,
+GPU verification, and the production build. `pnpm test:browser` runs the browser
+suite separately. Tests use isolated servers and disposable browser profiles.
 
-- All 33 browser tests passed. These cover upload, replacement, restart, export,
-  image orientation and proportions, elastic sliders, pointer ownership,
-  configurable motion timing, reduced motion, themes, and unavailable WebGPU.
-- All 21 unit and static contract tests passed. Formatting, lint, Astro checking,
-  and the static production build passed. The production dependency audit found
-  no known vulnerabilities.
-- The static production smoke check passed at desktop and mobile sizes. Upload,
-  PNG export, themes, and restart worked without browser errors.
-- A separate read-only review accepted the GPU resource lifetime, failure paths,
-  animation cleanup, and control-state fixes without blocking findings.
+## Image and interaction contracts
 
-The follow-up motion repair passed `pnpm check` with all 54 tests. New browser
-checks cover error-text and icon exit overlap, rapid theme reversal, intermediate
-monochrome filter/mask frames, reversal during that transition, reduced-motion
-preview fading, and suppression of slider stretch. The original timing limits
-remain unchanged. Timing tests now timestamp DOM samples when the callback runs;
-the first rAF timestamp could be hundreds of milliseconds older than that sample
-after startup/GPU work. Readiness checks also wait for the upload control to be
-enabled after the fade.
+Browser checks cover upload, replacement, restart, export, image orientation and
+proportions, sliders, pointer ownership, motion timing, reduced motion, themes,
+error recovery, and unavailable WebGPU. Motion checks verify message exit overlap,
+rapid reversal, intermediate monochrome frames, and stable preview alignment.
+Spring-curve tests cover visual duration and physical settling separately.
 
-The separate `pnpm test:browser` run also passed all 33 cases. A final guard for
-synchronous reduced-motion completion was followed by clean static checks, five
-passing affected browser tests, and a fresh build. The rebuilt static preview
-passed desktop/mobile upload, export, theme, and restart smoke checks with no
-browser errors. These repairs have only been validated locally by this task.
+`pnpm test:gpu` compares decoded PNG pixels against the tracked renderer in
+`test/fixtures/painterly-reference.ts`. It generates synthetic input and uses
+the tracked natural image. It checks transparent input, filter reuse, failed
+replacement rollback, and device-error handling. It needs no separate reference
+checkout or existing server. Temporary images, the server, and the browser are
+removed on completion or failure.
 
-Calibrated spring curves matched the archived Motion generator within 3e-16 in
-the tested physics and visual-duration configurations. Slider settling times
-also matched at the same sampling interval. Anime.js remains the animation
-engine. A separate review found no required motion-repair changes after checking
-the original generator's settling behavior.
+Pixel comparisons disable Helium's canvas privacy noise only in disposable test
+processes. They do not change normal browser settings or use software-renderer
+flags.
 
-The GPU checks compare decoded PNG pixels against the saved renderer. Original
-pixels, transparent input, and the preserved export after a failed replacement
-matched exactly. Filtered synthetic and natural images had mean RGB error below
-0.041 on the 0–255 scale. Fewer than 0.001% of pixels had a channel error above 2.
-Rare variance-sector boundaries differ because of floating-point arithmetic;
+The migration comparison on 6 September 2026 found exact matches for original
+pixels, transparent input, and preserved exports after failed replacements.
+Filtered synthetic and natural images had mean RGB error below 0.041 on the
+0–255 scale. Fewer than 0.001% of pixels had a channel error above 2. Rare
+variance-sector boundaries differ because of floating-point arithmetic;
 filtered output is not universally byte-identical.
 
-Source uploads use premultiplied alpha to preserve the saved renderer's handling
-of transparent pixels. Paint changes leave the filter-pass count unchanged;
-Brush changes rebuild the cached result. An injected native GPU error blocks
-export and leaves a persistent failure state.
+## Production smoke check
 
-Helium's canvas privacy noise was disabled only in disposable test processes for
-pixel comparisons. The user's normal browser settings were not changed. GPU
-tests used the hardware adapter, without software-renderer flags.
+`node test/production-smoke.ts <url> <output-directory>` exercises upload, PNG
+download, themes, mobile layout, and restart, and reports browser errors.
+Local tests do not establish that a deployed site works. Run this check against
+the target URL.
 
-## Component styling follow-up
+## Historical performance comparison
 
-The component styling cleanup passed `pnpm check` with all 62 tests, followed by
-a separate `pnpm test:browser` run with all 41 tests passing. Global UI selectors
-were replaced with utilities in the owning Astro components and scoped CSS for
-complex effects. The upload/reveal DOM and animation hooks were preserved.
-
-Eight before/after production captures cover light and dark themes, desktop and
-mobile widths, and empty and uploaded-image states. Every sampled computed style
-and element rectangle matched. Each screenshot differed by only one theme-icon
-edge pixel, with a maximum channel difference of 2/255. The standalone button
-fixture also passed checks for all 20 examples in both themes, including loading
-recovery. Compact evidence is in `analysis-output/style-colocation` (about 560 KB).
-
-## Performance measurements
-
-Before the follow-up motion repair, three alternating runs compared local
-production builds on the same machine.
+On 6 September 2026, before subsequent motion refinements, three alternating
+runs compared local Next.js and Astro production builds on the same machine.
 Each run used a fresh Helium process, a 1280 × 960 viewport, reduced motion, and
-the same 800 × 600 input. Timings below are medians and include browser automation
-overhead. They are diagnostic samples, not cross-device performance guarantees.
+the same 800 × 600 input. These medians include browser automation overhead.
+They are historical diagnostic samples, not current cross-device guarantees.
 
-| Measure                          | Saved Next.js version | Astro version |
-| -------------------------------- | --------------------: | ------------: |
-| Loaded JavaScript, decoded bytes |               737,324 |       199,000 |
-| Loaded font bytes                |               276,808 |        70,504 |
-| Upload until controls are ready  |                262 ms |        244 ms |
-| PNG download                     |                 89 ms |         95 ms |
-| Paint key press plus two frames  |                 38 ms |         36 ms |
+| Measure                          | Next.js version | Astro version |
+| -------------------------------- | --------------: | ------------: |
+| Loaded JavaScript, decoded bytes |         737,324 |       199,000 |
+| Loaded font bytes                |         276,808 |        70,504 |
+| Upload until controls are ready  |          262 ms |        244 ms |
+| PNG download                     |           89 ms |         95 ms |
+| Paint key press plus two frames  |           38 ms |         36 ms |
 
 JavaScript decreased by 73%, and loaded font bytes decreased by 75%. Interaction
-times were similar in this small sample; export was slightly slower. The Astro
-JavaScript files total 66,077 bytes when gzip-compressed locally. Network timing
-was not compared because the local servers used different compression settings.
+times were similar in this small sample; export was slightly slower. Network
+timing was not compared because the servers used different compression settings.
 
-Run `node test/migration-benchmark.ts <url> <output-directory>` to repeat the
-diagnostic. Run `node test/production-smoke.ts <url> <output-directory>` against
-an accessible production deployment. The GPU comparison fixture and runner are
-in `test/fixtures/buttons` and `test/gpu-verification.ts`. Run `pnpm test:gpu`
-to repeat the GPU comparison. It is also included in `pnpm check`.
-The command uses Helium with a hardware WebGPU adapter. It creates an isolated
-fixture server on an available port, generates its synthetic input, and uses the
-tracked natural image. No existing server or ignored input file is required.
-It prints metrics and removes its temporary images, server, and browser on
-completion or failure.
-
-Compact screenshots, PNG comparisons, and measurements are retained locally in
-the ignored `analysis-output` directory. Local test acceptance does not by itself
-prove remote ownership or a production deployment.
-
-# Cloudflare checkout verification, 6 September 2026
-
-Verified in the independent `/Users/imo/Documents/GitHub/lukis` checkout with
-Node.js 24.19.0 and pnpm 11.1.1. Formatting, lint, type checks, all 62 tests,
-and the separate 41-test Helium suite passed. The GPU check timed out waiting
-for a download on its first run and passed unchanged when run on its own.
-The production build and Wrangler strict dry run passed with 79 static files.
-The production dependency audit reported no known vulnerabilities.
-These checks do not establish a live Cloudflare deployment.
+Run `node test/migration-benchmark.ts <url> <output-directory>` against a build
+to collect the same diagnostic. Comparing versions requires an independently
+available build of each version.

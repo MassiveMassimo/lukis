@@ -1,5 +1,7 @@
 # Lukis
 
+Try [Lukis](https://lukis.mhmmadjid.workers.dev/).
+
 Lukis turns a local PNG, JPEG, or WebP image into a painting. Adjust Paint and
 Brush, then download a PNG. Images stay in the browser.
 
@@ -31,7 +33,7 @@ brush size. Paint changes use a separate blend pass. PNG export reads from a
 persistent output texture. Image replacement commits only after processing
 succeeds.
 
-The migration checks compare decoded PNGs with the saved renderer and exercise
+The image checks compare decoded PNGs with the tracked reference renderer and exercise
 orientation, image proportions, replacement, slider input, reduced motion,
 theme changes, and unavailable WebGPU.
 
@@ -47,20 +49,12 @@ processing stays in the browser. No package registry token is required.
 
 Use Node.js 24 and the pinned pnpm version. Sign in with `pnpm exec wrangler login`,
 then run `pnpm deploy:check` to validate the upload or `pnpm deploy` to publish.
-The Cloudflare account and Worker name are set in `wrangler.jsonc`.
+Wrangler uses the account selected during login. Set `CLOUDFLARE_ACCOUNT_ID` in
+your shell to select another account. The Worker name is set in `wrangler.jsonc`;
+change it before deploying your own copy.
 
-The dedicated checkout is `/Users/imo/Documents/GitHub/lukis`. Its remote is the
-private [MassiveMassimo/lukis](https://github.com/MassiveMassimo/lukis) repository.
-See [the migration status](docs/migration.md) for verified publication status.
+## Documentation and attribution
 
-## Reference and recovery
-
-The previous Next.js and Motion version, including its original history and
-archive tag, is preserved in a separate local worktree and complete Git bundle:
-
-- `/Users/imo/Documents/GitHub/lukis-nextjs-reference`
-- `/Users/imo/Documents/GitHub/lukis-nextjs-reference.bundle`
-
-See [the migration contract](docs/migration.md) and
+See [the architecture](docs/migration.md), [testing and benchmarks](docs/validation.md), and
 [the Astro button port](docs/astro-button.md). Third-party notices are in
 `licenses/` and `public/fonts/sunghyun-sans/OFL.txt`.
