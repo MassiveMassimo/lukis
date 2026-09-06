@@ -4,7 +4,7 @@ import Desktop from "@tabler/icons/outline/device-desktop.svg";
 import Sun from "@tabler/icons/outline/sun.svg";
 import Moon from "@tabler/icons/outline/moon.svg";
 ---
-<div class="theme-controls fixed bottom-4 left-4 z-50">
+<div class="theme-controls fixed bottom-4 left-4 z-50 compact:top-[max(var(--page-padding),env(safe-area-inset-top))] compact:right-[max(var(--page-padding),env(safe-area-inset-right))] compact:bottom-auto compact:left-auto">
   <Button id="theme" label="Theme: System. Switch to Light" variant="ghost" size="icon">
     <span slot="icon" class="theme-icons relative grid size-5">
       <span data-theme-icon="system" class="col-start-1 row-start-1 grid place-items-center blur-none"><Desktop /></span>
