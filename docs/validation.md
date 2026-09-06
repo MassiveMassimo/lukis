@@ -102,6 +102,7 @@ completion or failure.
 Compact screenshots, PNG comparisons, and measurements are retained locally in
 the ignored `analysis-output` directory. Local test acceptance does not by itself
 prove remote ownership or a production deployment.
+
 # Cloudflare checkout verification, 6 September 2026
 
 Verified in the independent `/Users/imo/Documents/GitHub/lukis` checkout with

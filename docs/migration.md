@@ -74,8 +74,10 @@ The history rewrite left the current source tree unchanged.
 Historical snapshots may reference renamed packages that no longer resolve.
 Use the untouched local reference and bundle to run the original application.
 
-Cloudflare configuration is prepared in `wrangler.jsonc`. Deployment is pending
-OAuth authorization with Workers Scripts permission. The existing Vercel site
-remains available during verification. Git-connected deployment is not configured.
+Cloudflare Workers Static Assets serves
+[lukis.mhmmadjid.workers.dev](https://lukis.mhmmadjid.workers.dev) in the personal
+account configured in `wrangler.jsonc`. The sanitized history and accepted app
+changes are pushed to personal GitHub. The existing Vercel site remains available
+as a fallback. Git-connected deployment is not configured; use `pnpm deploy`.
 For rollback after a successful Cloudflare deployment, use `pnpm exec wrangler
 rollback` to restore a prior version, then repeat the production smoke check.
