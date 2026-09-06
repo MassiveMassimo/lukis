@@ -22,15 +22,24 @@ export type UploadIsCurrent = () => boolean;
 export type LatestUploadTask<TResult> = (
   isCurrent: UploadIsCurrent,
 ) => TResult | PromiseLike<TResult>;
-export type LatestUploadRunner = <TResult>(upload: LatestUploadTask<TResult>) => Promise<TResult>;
+export interface LatestUploadRunner {
+  <TResult>(upload: LatestUploadTask<TResult>): Promise<TResult>;
+  cancel: () => void;
+}
 
 export function createLatestUploadRunner(): LatestUploadRunner {
   let latestRequest = 0;
 
-  return async function runLatestUpload<TResult>(
+  const runLatestUpload = async function runLatestUpload<TResult>(
     upload: LatestUploadTask<TResult>,
   ): Promise<TResult> {
     const request = ++latestRequest;
     return upload(() => request === latestRequest);
   };
+
+  return Object.assign(runLatestUpload, {
+    cancel: () => {
+      latestRequest += 1;
+    },
+  });
 }

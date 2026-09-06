@@ -45,6 +45,25 @@ test("the latest upload supersedes an older unfinished upload", async () => {
   assert.deepEqual(appliedFiles, ["second.webp"]);
 });
 
+test("cancelling uploads invalidates unfinished work", async () => {
+  const runLatestUpload = createLatestUploadRunner();
+  let finishUpload: (() => void) | undefined;
+  let applied = false;
+
+  const upload = runLatestUpload(async (isCurrent) => {
+    await new Promise<void>((resolve) => {
+      finishUpload = resolve;
+    });
+    applied = isCurrent();
+  });
+
+  runLatestUpload.cancel();
+  finishUpload?.();
+  await upload;
+
+  assert.equal(applied, false);
+});
+
 test("output dimensions preserve aspect ratio and cap the longest edge", () => {
   assert.deepEqual(outputDimensions(4000, 2000), {
     width: 1600,
