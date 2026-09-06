@@ -12,6 +12,13 @@ export function createSlider(element: HTMLElement, onChange: (value: number) => 
   const min = Number(element.getAttribute("aria-valuemin"));
   const max = Number(element.getAttribute("aria-valuemax"));
   const step = Number(element.dataset.step);
+  const notchPositions = [
+    0,
+    ...[...element.querySelectorAll<HTMLElement>("[data-notch-value]")].map(
+      (notch) => (Number(notch.dataset.notchValue) - min) / (max - min),
+    ),
+    1,
+  ];
   let value = Number(element.getAttribute("aria-valuenow"));
   const visual = { fill: ((value - min) / (max - min)) * 100, stretch: 0 };
   let animation: ReturnType<typeof animate> | undefined;
@@ -122,8 +129,10 @@ export function createSlider(element: HTMLElement, onChange: (value: number) => 
       if (!pointer || pointer.id !== event.pointerId) return;
       if (!pointer.dragged) {
         let position = clamp((event.clientX - pointer.rect.left) / pointer.rect.width, 0, 1);
-        const snap = Math.round(position * 10) / 10;
-        if ((max - min) / step > 10 && Math.abs(snap - position) <= 0.03125) position = snap;
+        const snap = notchPositions.reduce((nearest, notch) =>
+          Math.abs(nearest - position) < Math.abs(notch - position) ? nearest : notch,
+        );
+        if (Math.abs(snap - position) <= 0.03125) position = snap;
         update(min + position * (max - min));
       }
       release();
