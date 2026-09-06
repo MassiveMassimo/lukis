@@ -162,11 +162,13 @@ canvas {
 }
 .dropzone-monogram {
   position: absolute;
-  top: -5rem;
+  top: -3rem;
   left: 50%;
   width: 90px;
   height: 68px;
-  transform: translateX(-50%);
+  opacity: 0.32;
+  mask-image: linear-gradient(to bottom, black 0%, black 30%, transparent 68%);
+  transform: translateX(-50%) rotate(-7deg);
 }
 .outgoing-bounds {
   position: absolute;
