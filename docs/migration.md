@@ -67,8 +67,10 @@ layout, and restart, with no browser errors.
 
 The independent checkout is `/Users/imo/Documents/GitHub/lukis`, on `main`, with
 the private [MassiveMassimo/lukis](https://github.com/MassiveMassimo/lukis) as
-`origin`. The original working checkout remains intact. The personal copy will
-retain commit history with explicit former branding sanitized, as approved.
+`origin`. The original working checkout remains intact. The personal copy
+retains commit history with explicit former branding sanitized, as approved.
+All reachable file contents, paths, and commit objects passed the branding scan.
+The history rewrite left the current source tree unchanged.
 Historical snapshots may reference renamed packages that no longer resolve.
 Use the untouched local reference and bundle to run the original application.
 
