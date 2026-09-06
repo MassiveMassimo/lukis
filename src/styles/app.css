@@ -87,7 +87,8 @@ button {
   display: grid;
   overflow: hidden;
   border: 0;
-  background: var(--background);
+  background: color-mix(in srgb, var(--background) 40%, transparent);
+  backdrop-filter: blur(8px);
   padding: 0;
   outline: none;
   cursor: pointer;
@@ -168,6 +169,10 @@ canvas {
   height: 81.6px;
   opacity: 0.32;
   transform: translateX(-50%) rotate(-7deg);
+}
+:root:not(.dark) .dropzone-monogram {
+  --logo-top: #000;
+  --logo-bottom: #595959;
 }
 .outgoing-bounds {
   position: absolute;
@@ -279,11 +284,12 @@ canvas {
   cursor: ew-resize;
 }
 .elastic-slider:focus-visible {
-  outline: 1px solid var(--focus-ring);
-  outline-offset: 3px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 .elastic-slider[aria-disabled="true"] {
-  cursor: default;
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 .slider-track {
   position: relative;
@@ -319,6 +325,7 @@ canvas {
 }
 .slider-value {
   right: 12px;
+  font-variant-numeric: tabular-nums;
 }
 [data-active="true"] .slider-value {
   color: var(--foreground);
@@ -338,9 +345,11 @@ canvas {
 }
 .slider-marks span {
   position: absolute;
-  top: 15px;
+  top: 50%;
   width: 1px;
-  height: 6px;
+  height: 8px;
+  border-radius: 9999px;
+  transform: translate(-50%, -50%);
   background: var(--muted-foreground);
   opacity: 0;
   transition: opacity 0.2s;
@@ -414,6 +423,10 @@ canvas {
   --guide-color: var(--focus-ring);
 }
 @media (max-width: 44rem) {
+  .guide-line-top,
+  .guide-line-bottom {
+    mask-image: none;
+  }
   .canvas-frame,
   .message-chrome,
   .reference-frame,
