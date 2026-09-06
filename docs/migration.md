@@ -16,5 +16,15 @@ Implementation order: GPU proof and exports; Astro UI and motion; interaction/vi
 
 Local acceptance is complete. See [the validation results](validation.md) for
 test coverage, image parity, and measured performance. The current tree has no
-old company branding. The treatment of historical file contents remains an
-owner decision before the GitHub move.
+old company branding.
+
+On 6 September 2026, source commit `b502e45` was deployed to the personal Vercel
+project at [lukis-two.vercel.app](https://lukis-two.vercel.app). Vercel reports
+production Ready. Live Helium checks passed upload, PNG export, themes, mobile
+layout, and restart, with no browser errors.
+
+The private [MassiveMassimo/lukis](https://github.com/MassiveMassimo/lukis)
+repository has been created. It is still empty and is not connected to Vercel.
+Publishing history is pending the owner's choice between keeping the Astro-era
+commits or sanitizing the older commits. The full original history remains in
+the local reference and bundle.

@@ -42,9 +42,15 @@ try {
   await download.saveAs(join(directory, "export.png"));
   await page.screenshot({ path: join(directory, "desktop-image.png") });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.waitForFunction(
-    () => document.querySelector(".canvas-frame")?.getAttribute("data-animating") !== "true",
-  );
+  await page.waitForFunction(() => {
+    const bounds = document.querySelector(".tool-surface")?.getBoundingClientRect();
+    return (
+      document.querySelector(".canvas-frame")?.getAttribute("data-animating") !== "true" &&
+      bounds &&
+      bounds.x >= 0 &&
+      bounds.right <= window.innerWidth
+    );
+  });
   const bounds = await page.locator(".tool-surface").boundingBox();
   assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 390);
   await page.screenshot({ path: join(directory, "mobile-image.png") });
