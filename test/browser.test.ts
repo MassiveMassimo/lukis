@@ -1405,6 +1405,7 @@ for (const [method, reducedMotion] of [
             opacity: appearance.opacity,
             filter: appearance.filter,
             mask: appearance.maskImage,
+            maskComposite: appearance.maskComposite,
           };
           const transfer = new DataTransfer();
           transfer.items.add(new File([new Uint8Array(bytes)], "new.png", { type: "image/png" }));
@@ -1435,7 +1436,8 @@ for (const [method, reducedMotion] of [
           const preservedAppearance =
             outgoing.style.opacity === expected.opacity &&
             outgoing.style.filter === expected.filter &&
-            outgoing.style.maskImage === expected.mask;
+            outgoing.style.maskImage === expected.mask &&
+            getComputedStyle(outgoing).maskComposite === expected.maskComposite;
           const frames = [];
           const start = performance.now();
           let loadedAt: number | undefined;

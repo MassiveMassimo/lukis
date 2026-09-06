@@ -19,7 +19,8 @@
     "typecheck": "astro check",
     "test": "node --test test/*.test.ts",
     "test:browser": "node --test test/browser.test.ts",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+    "test:gpu": "node test/gpu-verification.ts",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm test:gpu && pnpm build"
   },
   "dependencies": {
     "animejs": "4.5.0",

@@ -1,17 +1,43 @@
 /* oxlint-disable no-await-in-loop -- GPU state and paired exports must be tested in order. */
 import assert from "node:assert/strict";
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, realpath, mkdir, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
+import { dev } from "astro";
 
-const directory = "analysis-output/gpu";
-await mkdir(directory, { recursive: true });
-// Pixel comparisons need exact readback. This flag affects this disposable test browser only.
-const browser = await chromium.launch({
-  executablePath: "/Applications/Helium.app/Contents/MacOS/Helium",
-  headless: true,
-  args: ["--disable-features=HeliumNoiseCanvas"],
-});
+const root = fileURLToPath(new URL("../", import.meta.url));
+const workspace = await realpath(await mkdtemp(join(tmpdir(), "lukis-gpu-")));
+const directory = join(workspace, "results");
+let server: Awaited<ReturnType<typeof dev>> | undefined;
+let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 try {
+  await Promise.all(
+    [
+      "src",
+      "public",
+      "test/fixtures/buttons/src",
+      "test/fixtures/buttons/astro.config.mjs",
+      "test/fixtures/buttons/tsconfig.json",
+      "test/fixtures/painterly-reference.ts",
+      "package.json",
+      "tsconfig.json",
+    ].map((entry) => cp(join(root, entry), join(workspace, entry), { recursive: true })),
+  );
+  await symlink(join(root, "node_modules"), join(workspace, "node_modules"), "dir");
+  await mkdir(directory);
+  server = await dev({
+    root: join(workspace, "test/fixtures/buttons"),
+    server: { host: "127.0.0.1", port: 0 },
+    logLevel: "error",
+  });
+  // Pixel comparisons need exact readback. This flag affects this disposable test browser only.
+  browser = await chromium.launch({
+    executablePath: "/Applications/Helium.app/Contents/MacOS/Helium",
+    headless: true,
+    args: ["--disable-features=HeliumNoiseCanvas"],
+  });
   const page = await browser.newPage();
   await page.addInitScript(() => {
     const request = GPUAdapter.prototype.requestDevice;
@@ -23,10 +49,33 @@ try {
   });
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto("http://localhost:4186/gpu");
+  await page.goto(`http://127.0.0.1:${server.address.port}/gpu`);
   await page.getByRole("status").filter({ hasText: "Initialized" }).waitFor();
+  const input = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 800;
+    canvas.height = 600;
+    const context = canvas.getContext("2d")!;
+    const gradient = context.createLinearGradient(0, 0, 800, 600);
+    gradient.addColorStop(0, "#f04c78");
+    gradient.addColorStop(0.5, "#72b8ca");
+    gradient.addColorStop(1, "#223548");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, 800, 600);
+    context.fillStyle = "#eedb85";
+    context.fillRect(75, 80, 225, 320);
+    context.fillStyle = "#3b678a";
+    context.beginPath();
+    context.arc(510, 300, 160, 0, Math.PI * 2);
+    context.fill();
+    return canvas.toDataURL();
+  });
   const start = performance.now();
-  await page.locator('input[type="file"]').setInputFiles("analysis-output/baseline/input.png");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "synthetic.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(input.split(",")[1], "base64"),
+  });
   await page.getByRole("status").filter({ hasText: "Ready: 1" }).waitFor();
   const uploadMs = performance.now() - start;
   const exportStart = performance.now();
@@ -123,7 +172,9 @@ try {
     `${directory}/after-invalid-gpu.png`,
   ]);
   assert.equal(rollback.max, 0);
-  await page.locator('input[type="file"]').setInputFiles("public/window-reference-painterly.png");
+  await page
+    .locator('input[type="file"]')
+    .setInputFiles(join(workspace, "public/window-reference-painterly.png"));
   await page.getByRole("status").filter({ hasText: "Ready: 3" }).waitFor();
   const natural = await savePair("natural");
   const transparentFixture = await page.evaluate(() => {
@@ -193,8 +244,15 @@ try {
     fatalErrorBlocksExport: !unexpectedDownload,
     errors,
   };
-  await writeFile(`${directory}/metrics.json`, JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));
 } finally {
-  await browser.close();
+  try {
+    await browser?.close();
+  } finally {
+    try {
+      await server?.stop();
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }
 }

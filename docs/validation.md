@@ -55,7 +55,13 @@ was not compared because the local servers used different compression settings.
 Run `node test/migration-benchmark.ts <url> <output-directory>` to repeat the
 diagnostic. Run `node test/production-smoke.ts <url> <output-directory>` against
 an accessible production deployment. The GPU comparison fixture and runner are
-in `test/fixtures/buttons` and `test/gpu-verification.ts`.
+in `test/fixtures/buttons` and `test/gpu-verification.ts`. Run `pnpm test:gpu`
+to repeat the GPU comparison. It is also included in `pnpm check`.
+The command uses Helium with a hardware WebGPU adapter. It creates an isolated
+fixture server on an available port, generates its synthetic input, and uses the
+tracked natural image. No existing server or ignored input file is required.
+It prints metrics and removes its temporary images, server, and browser on
+completion or failure.
 
 Compact screenshots, PNG comparisons, and measurements are retained locally in
 the ignored `analysis-output` directory. Local test acceptance does not by itself

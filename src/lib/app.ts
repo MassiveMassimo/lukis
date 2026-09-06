@@ -269,6 +269,7 @@ export function mountApp() {
       opacity: appearance.opacity,
       filter: appearance.filter,
       maskImage: appearance.maskImage,
+      maskComposite: appearance.maskComposite,
     };
     await processor.snapshot(outgoing);
     Object.assign(outgoing.style, style);
