@@ -1,16 +1,14 @@
-# Painterly
+# Lukis
 
-Painterly is an internal, browser-only image tool. It applies the Lukis
-Papari-Kuwahara shader to a local PNG, JPEG, or WebP image and exports a PNG.
-Images never leave the browser.
+Lukis turns a local PNG, JPEG, or WebP image into a painting. Adjust Paint and
+Brush, then download a PNG. Images stay in the browser.
 
-## Requirements
+Built with Astro, plain TypeScript, Anime.js, vgpu, Tailwind CSS v4, Tabler icons,
+and self-hosted Sunghyun Sans. The production app has no React runtime.
 
-- Node.js 24
-- pnpm 11.1.1
-- Access to `@MassiveMassimo/ui` in GitHub Packages
+## Development
 
-## Commands
+Use Node.js 24 and pnpm 11.1.1.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -19,25 +17,49 @@ pnpm check
 pnpm test:browser
 ```
 
-The local app runs at `http://localhost:3000`.
+WebGPU must be available. There is no WebGL fallback. Input files are limited to
+25 MB. Output is capped at 1600 pixels on the longest edge.
 
-## Deployment
+The development build includes vanilla DialKit for Bounds, Reveal, and Sound.
+Production builds omit the tuning panel. Theme selection supports System,
+Light, and Dark.
 
-Production: [lukis.vercel.app](https://lukis.vercel.app/).
-This stable URL follows the latest production deployment in the NLP Labs
-Vercel project `lukis`.
+## Performance and image quality
 
-Deploy the current working tree with:
+The GPU pipeline caches the full painterly result for the current image and
+brush size. Paint changes use a separate blend pass. PNG export reads from a
+persistent output texture. Image replacement commits only after processing
+succeeds.
 
-```sh
-vercel deploy --prod --scope MassiveMassimo
-```
+The migration checks compare decoded PNGs with the saved renderer and exercise
+orientation, image proportions, replacement, slider input, reduced motion,
+theme changes, and unavailable WebGPU.
 
-The project uses the Next.js preset, Node.js 24, and Corepack to select the
-pnpm version from `package.json`. Vercel's existing `NPM_TOKEN` and `NPM_RC`
-environment variables provide GitHub Packages access during builds.
+The production migration uses 73% less JavaScript and 75% fewer loaded font
+bytes in the local comparison. Interaction times were similar. See the
+[validation results](docs/validation.md) for measurements and limits.
 
-Automatic GitHub deployments are not connected yet. An organization admin
-must grant the Vercel GitHub App access to `MassiveMassimo/lukis`
-before the project can connect to that private repository. Local edits do
-not update the live site until deployed.
+## Hosting
+
+`pnpm build` writes the static site to `dist/`. Vercel needs the Astro preset,
+Node.js 24, and the pinned pnpm version. No package registry token or image
+processing server is required.
+
+The personal Vercel project `lukis` exists in `massivemassimos-projects` and this
+checkout is linked to it. It uses the Astro preset and has no project environment
+variables. Local validation is complete. The GitHub move to `MassiveMassimo/lukis`
+and production deployment are pending the decision about historical file
+contents. The previous hosted version remains unchanged.
+
+## Reference and recovery
+
+The previous Next.js and Motion version is preserved by tag
+`archive/nextjs-motion-2026-09-06`. A separate local worktree and a complete
+Git bundle are available at:
+
+- `/Users/imo/Documents/GitHub/lukis-nextjs-reference`
+- `/Users/imo/Documents/GitHub/lukis-nextjs-reference.bundle`
+
+See [the migration contract](docs/migration.md) and
+[the Astro button port](docs/astro-button.md). Third-party notices are in
+`licenses/` and `public/fonts/sunghyun-sans/OFL.txt`.

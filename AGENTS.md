@@ -1,9 +1,11 @@
-<!-- BEGIN:nextjs-agent-rules -->
+# Lukis
 
-# This is NOT the Next.js you know
-
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
-
-This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
-
-<!-- END:nextjs-agent-rules -->
+- This is a static Astro app. Use Astro components and plain TypeScript. Do not add React or TSX.
+- Use Anime.js for motion, vgpu for WebGPU, Tailwind v4, and Tabler SVG icons.
+- Preserve the Papari-Kuwahara filter, local image custody, opaque PNG output, and 1600px limit.
+- Paint changes must reuse the filtered image. Refilter only when the image or Brush changes.
+- Keep image replacement transactional. A failed replacement must preserve the last valid export.
+- Preserve keyboard and pointer slider input, reduced motion, theme persistence, and image proportions during motion.
+- Run `pnpm check` and `pnpm test:browser`. Browser tests use Helium with isolated profiles.
+- Use the saved Next.js/Motion reference for visual comparisons. See `docs/migration.md`.
+- Keep deployment status explicit. Local changes do not prove a personal-account transfer or deployment.

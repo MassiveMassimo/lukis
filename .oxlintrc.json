@@ -1,13 +1,12 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["eslint", "import", "jsx-a11y", "nextjs", "oxc", "react", "typescript", "unicorn"],
+  "plugins": ["eslint", "import", "oxc", "typescript", "unicorn"],
   "categories": {
     "correctness": "error",
     "perf": "warn",
     "suspicious": "warn"
   },
   "rules": {
-    "import/no-unassigned-import": "off",
-    "react/react-in-jsx-scope": "off"
+    "import/no-unassigned-import": "off"
   }
 }

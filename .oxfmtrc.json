@@ -1,6 +1,6 @@
 {
   "sortPackageJson": false,
   "sortTailwindcss": {
-    "stylesheet": "./app/globals.css"
+    "stylesheet": "./src/styles/global.css"
   }
 }

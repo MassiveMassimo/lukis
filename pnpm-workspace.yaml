@@ -5,4 +5,11 @@ saveExact: true
 verifyDepsBeforeRun: error
 
 minimumReleaseAgeExclude:
-  - "@MassiveMassimo/ui"
+  # Vanilla support first shipped in this explicitly selected release.
+  - "dialkit@2.0.0"
+  - "vgpu@0.4.0"
+  - "@vgpu/adapter-mock@0.4.0"
+  - "@vgpu/adapter-node@0.4.0"
+  - "@vgpu/core@0.4.0"
+  - "@vgpu/wgsl@0.4.0"
+  - "@vgpu/wgsl-std@0.4.0"

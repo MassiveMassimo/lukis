@@ -2,6 +2,7 @@
 .env
 .env.*
 .next/
+.astro/
 .vercel/
 dist/
 node_modules/

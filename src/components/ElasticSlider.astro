@@ -1,0 +1,15 @@
+---
+interface Props { label: string; value: number; min: number; max: number; step: number; suffix?: string }
+const { label, value, min, max, step, suffix = "" } = Astro.props;
+const percent = (value - min) / (max - min) * 100;
+const formatted = step < 1 ? value.toFixed(1) : String(value);
+---
+<div class="elastic-slider" data-slot="elastic-slider" role="slider" tabindex="0" aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={value} aria-valuetext={`${formatted}${suffix}`} data-step={step} data-suffix={suffix}>
+  <div class="slider-track" data-slot="elastic-slider-track" style={`--fill:${percent}%`}>
+    <span class="slider-fill" data-slot="elastic-slider-fill"></span>
+    <span class="slider-marks" aria-hidden="true">{Array.from({ length: 9 }, (_, i) => <span style={`left:${(i + 1) * 10}%`}></span>)}</span>
+    <span class="slider-label" data-slot="elastic-slider-label">{label}</span>
+    <span class="slider-value" data-slot="elastic-slider-value">{formatted}{suffix}</span>
+    <span class="slider-handle" data-slot="elastic-slider-handle" aria-hidden="true"></span>
+  </div>
+</div>

@@ -1,0 +1,39 @@
+---
+import "../styles.css";
+---
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><title>GPU verification</title><link rel="icon" href="data:," /></head>
+<body><input type="file" /><canvas></canvas><button id="download">Download PNG</button><p role="status">Starting</p>
+<label>Paint<input id="strength" type="number" value="0.78" step="0.01" /></label>
+<label>Brush<input id="brush" type="number" value="1.4" step="0.1" /></label>
+<canvas id="reference"></canvas><button id="reference-download">Download reference</button>
+<script>
+  import { createImageProcessor } from "../../../../../src/lib/processor";
+  import { createPainterlyProcessor } from "../../../painterly-reference";
+  const canvas = document.querySelector("canvas")!;
+  const status = document.querySelector('[role="status"]')!;
+  const processor = await createImageProcessor(canvas, (error) => { status.textContent = error.message; });
+  const reference = createPainterlyProcessor(document.querySelector<HTMLCanvasElement>("#reference")!);
+  const strength = document.querySelector<HTMLInputElement>("#strength")!;
+  const brush = document.querySelector<HTMLInputElement>("#brush")!;
+  for (const input of [strength, brush]) input.addEventListener("change", async () => {
+    await processor.render(Number(strength.value), Number(brush.value));
+    reference.render(Number(strength.value), Number(brush.value));
+    status.textContent = `Ready: ${processor.filterPasses}`;
+  });
+  status.textContent = "Initialized";
+  document.querySelector('input[type="file"]')!.addEventListener("change", async (event) => {
+    try {
+      const file = (event.currentTarget as HTMLInputElement).files![0];
+      await processor.load(file, () => true, .78, 1.4);
+      await reference.load(file);
+      reference.render(.78, 1.4);
+      status.textContent = `Ready: ${processor.filterPasses}`;
+    } catch (error) { status.textContent = String(error); }
+  });
+  document.querySelector("#download")!.addEventListener("click", async () => {
+    try { await processor.download("reference"); }
+    catch (error) { status.textContent = String(error); }
+  });
+  document.querySelector("#reference-download")!.addEventListener("click", () => reference.download("reference"));
+</script></body></html>

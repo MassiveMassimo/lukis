@@ -2,20 +2,18 @@ import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import { cp, mkdtemp, rm, symlink } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { after, before, test } from "node:test";
+import { after, afterEach, before, beforeEach, test } from "node:test";
 
 import { chromium } from "@playwright/test";
 import type { Browser, Page } from "@playwright/test";
 
 const host = "127.0.0.1";
 const root = fileURLToPath(new URL("../", import.meta.url));
-const nextBin = createRequire(import.meta.url).resolve("next/dist/bin/next");
 
 let baseUrl = "";
 let browser: Browser | undefined;
@@ -68,17 +66,7 @@ function reservePort(): Promise<number> {
 
 async function createIsolatedRoot(): Promise<string> {
   const destination = await mkdtemp(join(tmpdir(), "lukis-browser-"));
-  const entries = [
-    "app",
-    "components",
-    "lib",
-    "public",
-    "next-env.d.ts",
-    "next.config.ts",
-    "package.json",
-    "postcss.config.mjs",
-    "tsconfig.json",
-  ];
+  const entries = ["src", "public", "astro.config.mjs", "package.json", "tsconfig.json"];
 
   await Promise.all(
     entries.map((entry) =>
@@ -101,12 +89,12 @@ async function waitForServer(url: string, child: ChildProcess): Promise<void> {
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
       throw new Error(
-        `Next.js exited before it was ready with code ${child.exitCode}.\n${serverLog}`,
+        `Astro exited before it was ready with code ${child.exitCode}.\n${serverLog}`,
       );
     }
 
     try {
-      // Probes are sequential so they cannot pile up while Next.js compiles.
+      // Probes are sequential so they cannot pile up while Astro compiles.
       // oxlint-disable-next-line no-await-in-loop
       const response = await fetch(url, {
         signal: AbortSignal.timeout(1_000),
@@ -120,7 +108,7 @@ async function waitForServer(url: string, child: ChildProcess): Promise<void> {
     await delay(200);
   }
 
-  throw new Error(`Next.js did not become ready.\n${serverLog}`);
+  throw new Error(`Astro did not become ready.\n${serverLog}`);
 }
 
 async function waitForExit(child: ChildProcess, timeoutMs: number) {
@@ -240,7 +228,7 @@ async function captureBoundsRevealFrames(
         const opacity = Number.parseFloat(getComputedStyle(reveal).opacity);
         const isOverlap =
           frame.dataset.hasFile === "true" &&
-          getComputedStyle(frame).transform !== "none" &&
+          frame.dataset.animating === "true" &&
           opacity > 0.1 &&
           opacity < 0.999;
         beacon.dataset.animationOverlap = String(isOverlap);
@@ -277,7 +265,7 @@ async function captureBoundsRevealFrames(
         canvas.width === width &&
         canvas.height === height &&
         frame.dataset.hasFile === "true" &&
-        getComputedStyle(frame).transform === "none" &&
+        frame.dataset.animating !== "true" &&
         Number.parseFloat(getComputedStyle(reveal).opacity) >= 0.999
       );
     },
@@ -427,7 +415,7 @@ async function waitForProcessedImage(page: Page, expected: ImageExpectation): Pr
         canvas.height === height &&
         canvas.width === width &&
         clip?.getAttribute("aria-hidden") === "false" &&
-        getComputedStyle(document.querySelector(".canvas-frame")!).transform === "none" &&
+        (document.querySelector(".canvas-frame") as HTMLElement).dataset.animating !== "true" &&
         Number.parseFloat(getComputedStyle(reveal).opacity) >= 0.999
       );
     },
@@ -568,12 +556,27 @@ async function assertGuidesMatchFrame(page: Page): Promise<void> {
   );
 }
 
+async function downloadPixels(page: Page): Promise<string> {
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("button", { name: "Download painterly PNG" }).click(),
+  ]);
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  await page.waitForFunction(
+    () => !document.querySelector<HTMLButtonElement>("#download")?.disabled,
+  );
+  return `data:image/png;base64,${Buffer.concat(chunks).toString("base64")}`;
+}
+
 async function assertPortraitIsUpright(page: Page): Promise<void> {
-  const colors = await page.evaluate(() => {
-    const canvas = document.querySelector("canvas");
-    if (!(canvas instanceof HTMLCanvasElement)) {
-      throw new Error("The processed image canvas is missing.");
-    }
+  // WebGPU presentation textures expire after compositing; inspect the persistent PNG output.
+  const png = await downloadPixels(page);
+  const colors = await page.evaluate(async (source) => {
+    const canvas = new Image();
+    canvas.src = source;
+    await canvas.decode();
 
     const sample = document.createElement("canvas");
     sample.width = canvas.width;
@@ -596,7 +599,7 @@ async function assertPortraitIsUpright(page: Page): Promise<void> {
         ).data,
       ),
     };
-  });
+  }, png);
 
   assert.ok(colors.top[0] > colors.top[2], `expected red at top, received ${colors.top}`);
   assert.ok(
@@ -636,7 +639,7 @@ async function assertUploadStateRestored(page: Page): Promise<void> {
 
   assert.equal(await dropzone.isEnabled(), true);
   assert.equal(await page.getByRole("button", { name: "Restart with another image" }).count(), 0);
-  assert.equal(await page.locator(".controls").count(), 0);
+  assert.equal(await page.locator(".controls").isVisible(), false);
   assert.equal(await page.locator(".canvas-frame").getAttribute("data-has-file"), null);
   assert.equal(await page.locator('input[type="file"]').isEnabled(), true);
 }
@@ -647,12 +650,16 @@ before(async () => {
   baseUrl = `http://${host}:${port}`;
   const child = spawn(
     process.execPath,
-    [nextBin, "dev", "--webpack", "--hostname", host, "--port", String(port)],
+    [
+      "--input-type=module",
+      "-e",
+      `import { dev } from "astro"; const server = await dev({ root: process.cwd(), server: { host: "${host}", port: ${port} } }); process.on("SIGTERM", async () => { await server.stop(); process.exit(0); });`,
+    ],
     {
       cwd: isolatedRoot,
       env: {
         ...process.env,
-        NEXT_TELEMETRY_DISABLED: "1",
+        ASTRO_TELEMETRY_DISABLED: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -662,10 +669,20 @@ before(async () => {
   child.stderr?.on("data", recordServerOutput);
 
   await waitForServer(baseUrl, child);
+});
+
+// Helium exits when an isolated browser context closes, even with a blank tab open.
+beforeEach(async () => {
   browser = await chromium.launch({
-    args: ["--use-angle=swiftshader"],
+    executablePath: "/Applications/Helium.app/Contents/MacOS/Helium",
+    args: ["--disable-features=HeliumNoiseCanvas"],
     headless: true,
   });
+});
+
+afterEach(async () => {
+  await browser?.close();
+  browser = undefined;
 });
 
 after(async () => {
@@ -686,6 +703,7 @@ test("keeps a 1448 by 1086 landscape image undistorted", async () => {
 
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     await page.locator('input[type="file"]').setInputFiles({
       name: "landscape.png",
       mimeType: "image/png",
@@ -721,7 +739,7 @@ test("keeps underlying image pixels undistorted during the bounds and reveal ove
       "reveal.transition": revealTransition,
     };
     localStorage.setItem(
-      "dialkit:painterly",
+      "dialkit:lukis",
       JSON.stringify({
         version: 1,
         values,
@@ -735,6 +753,7 @@ test("keeps underlying image pixels undistorted during the bounds and reveal ove
 
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     const fixture = await createCirclePng(page, 360, 480);
     const samples = await captureBoundsRevealFrames(page, { height: 480, width: 360 }, () =>
       page.locator('input[type="file"]').setInputFiles({
@@ -790,7 +809,7 @@ test("reveals without a mask or zoom during bounds overlap", async () => {
       },
     };
     localStorage.setItem(
-      "dialkit:painterly",
+      "dialkit:lukis",
       JSON.stringify({
         version: 1,
         values,
@@ -804,6 +823,7 @@ test("reveals without a mask or zoom during bounds overlap", async () => {
 
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     const expected = { height: 480, width: 360 };
     const fixture = await createCirclePng(page, expected.width, expected.height);
     const samples = await captureRevealCenterSamples(page, expected, () =>
@@ -848,7 +868,7 @@ for (const scenario of [
         },
       };
       localStorage.setItem(
-        "dialkit:painterly",
+        "dialkit:lukis",
         JSON.stringify({
           version: 1,
           values,
@@ -861,6 +881,7 @@ for (const scenario of [
     const issues = watchForBrowserErrors(page);
     try {
       await page.goto(baseUrl);
+      await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
       await page.locator('input[type="file"]').setInputFiles({
         name: "timing.png",
         mimeType: "image/png",
@@ -953,13 +974,14 @@ test("hidden controls cannot focus and sliders preserve pointer ownership", asyn
       "bounds.transition": { type: "easing", duration: 2, ease: [0, 0, 1, 1] },
     };
     localStorage.setItem(
-      "dialkit:painterly",
+      "dialkit:lukis",
       JSON.stringify({ version: 1, values, baseValues: values, activePresetId: null }),
     );
   });
   const page = await context.newPage();
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     await page.locator('input[type="file"]').setInputFiles({
       name: "controls.png",
       mimeType: "image/png",
@@ -1036,6 +1058,7 @@ test("tunes, downloads, and restarts a processed image", async () => {
 
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     await page.locator('input[type="file"]').setInputFiles({
       name: "controls.png",
       mimeType: "image/png",
@@ -1055,7 +1078,7 @@ test("tunes, downloads, and restarts a processed image", async () => {
     const downloadPromise = page.waitForEvent("download");
     await page.getByRole("button", { name: "Download painterly PNG" }).click();
     const download = await downloadPromise;
-    assert.equal(download.suggestedFilename(), "controls-painterly.png");
+    assert.equal(download.suggestedFilename(), "controls-lukis.png");
     await page.waitForFunction(
       () => document.querySelector(".status")?.textContent === "Painterly PNG download started.",
     );
@@ -1083,6 +1106,7 @@ test("clears the image in half the duration of the returning bounds", async () =
   });
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     await page.locator('input[type="file"]').setInputFiles({
       name: "portrait.png",
       mimeType: "image/png",
@@ -1117,7 +1141,7 @@ test("clears the image in half the duration of the returning bounds", async () =
         });
         if (
           !frame.hasAttribute("data-has-file") &&
-          getComputedStyle(frame).transform === "none" &&
+          frame.dataset.animating !== "true" &&
           opacity === 0
         )
           break;
@@ -1161,6 +1185,7 @@ test("ignores a dropped replacement while Restart is exiting", async () => {
 
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     await page.locator('input[type="file"]').setInputFiles({
       name: "initial.png",
       mimeType: "image/png",
@@ -1231,6 +1256,7 @@ for (const reducedMotion of ["no-preference", "reduce"] as const) {
 
     try {
       await page.goto(baseUrl);
+      await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
       await page.locator('input[type="file"]').setInputFiles({
         name: "wide.png",
         mimeType: "image/png",
@@ -1289,7 +1315,8 @@ for (const reducedMotion of ["no-preference", "reduce"] as const) {
             ),
             width: controls.width,
             hasUploadInstructions:
-              document.querySelector("#image-requirements") !== null ||
+              document.querySelector<HTMLElement>("#image-requirements")?.checkVisibility() ===
+                true ||
               [...document.querySelectorAll("[data-message-text]")].some((text) =>
                 text.textContent?.includes("Drop or browse"),
               ),
@@ -1353,6 +1380,7 @@ for (const [method, reducedMotion] of [
     const issues = watchForBrowserErrors(page);
     try {
       await page.goto(baseUrl);
+      await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
       await page.locator('input[type="file"]').setInputFiles({
         name: "old.png",
         mimeType: "image/png",
@@ -1367,10 +1395,11 @@ for (const [method, reducedMotion] of [
         });
       }
       const png = Array.from(await createCirclePng(page, 64, 128));
+      const exportedPixels = await downloadPixels(page);
       const result = await page.evaluate(
-        async ({ bytes, method: uploadMethod }) => {
+        async ({ bytes, method: uploadMethod, exportedPixels: exportedImage }) => {
           const current = document.querySelector<HTMLCanvasElement>(".canvas-surface canvas")!;
-          const expectedPixels = current.toDataURL();
+          const expectedPixels = exportedImage;
           const appearance = getComputedStyle(current);
           const expected = {
             opacity: appearance.opacity,
@@ -1397,6 +1426,11 @@ for (const [method, reducedMotion] of [
             input.dispatchEvent(new Event("change", { bubbles: true }));
           }
           const outgoing = document.querySelector<HTMLCanvasElement>(".outgoing-image canvas")!;
+          // The cached GPU texture is read asynchronously before replacement decoding starts.
+          await new Promise<void>((resolve) => {
+            const ready = () => (outgoing.width > 0 ? resolve() : requestAnimationFrame(ready));
+            ready();
+          });
           const preservedPixels = outgoing.toDataURL() === expectedPixels;
           const preservedAppearance =
             outgoing.style.opacity === expected.opacity &&
@@ -1429,11 +1463,11 @@ for (const [method, reducedMotion] of [
           }
           return { preservedPixels, preservedAppearance, frames, released: outgoing.width === 0 };
         },
-        { bytes: png, method },
+        { bytes: png, method, exportedPixels },
       );
       assert.ok(
         result.preservedPixels,
-        "Keep the outgoing pixels before replacing the WebGL texture.",
+        "Keep the outgoing pixels before replacing the GPU texture.",
       );
       assert.ok(result.preservedAppearance, "Keep the outgoing color or monochrome treatment.");
       assert.ok(
@@ -1479,6 +1513,7 @@ test("keeps a valid replacement when a rapid invalid drop follows it", async () 
 
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     await page.locator('input[type="file"]').setInputFiles({
       name: "initial.png",
       mimeType: "image/png",
@@ -1532,6 +1567,7 @@ test("keeps a 1086 by 1448 portrait image upright and undistorted", async () => 
 
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     await page.locator('input[type="file"]').setInputFiles({
       name: "portrait.png",
       mimeType: "image/png",
@@ -1565,6 +1601,7 @@ test("keeps the monochrome reference still while a dropped image decodes", async
   const page = await getBrowser().newPage({ colorScheme: "dark", reducedMotion: "no-preference" });
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     const bytes = Array.from(await createSplitColorPng(page, 360, 640));
     await page.mouse.move(0, 0);
     const reference = page.locator(".dropzone-reference");
@@ -1622,6 +1659,7 @@ test("keeps upload chrome centered while a tall image reveals", async () => {
   const issues = watchForBrowserErrors(page);
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     const bytes = Array.from(await createSplitColorPng(page, 1086, 1448));
     await page.locator(".image-bounds").hover();
     const samples = await page.evaluate(async (png) => {
@@ -1687,6 +1725,7 @@ test("fades the mobile monogram with upload bounds and restores it after restart
   });
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     const monogram = page.locator(".dropzone-monogram").locator("..");
     assert.equal(await monogram.evaluate((element) => getComputedStyle(element).opacity), "1");
     await page.locator('input[type="file"]').setInputFiles({
@@ -1722,6 +1761,7 @@ test("wraps processing errors inside narrow portrait bounds", async () => {
   const page = await getBrowser().newPage({ viewport: { width: 1280, height: 800 } });
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     await page.locator('input[type="file"]').setInputFiles({
       name: "portrait.png",
       mimeType: "image/png",
@@ -1755,6 +1795,7 @@ test("reports invalid files and keeps upload recovery available", async () => {
 
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     await page.locator('input[type="file"]').setInputFiles({
       name: "animation.gif",
       mimeType: "image/gif",
@@ -1791,6 +1832,7 @@ test("repeating the same error restarts its display time", async () => {
   };
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     const input = page.locator('input[type="file"]');
     await input.setInputFiles(invalidFile);
     await assertErrorChrome(page, "Choose a PNG, JPEG, or WebP image.");
@@ -1824,6 +1866,7 @@ test("monochrome styling follows the theme without changing the full-color image
   };
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     await page.locator(".dropzone").dispatchEvent("dragenter");
     await expectMonochrome(
       ".dropzone-reference",
@@ -1866,6 +1909,7 @@ test("theme control cycles, persists, and follows the system only in System mode
   const issues = watchForBrowserErrors(page);
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     const control = page.getByRole("button", { name: /^Theme:/ });
     await control.waitFor();
     await page.waitForFunction(() => document.documentElement.classList.contains("dark"));
@@ -1916,6 +1960,7 @@ test("theme colors crossfade for 180ms, but not on mount or with reduced motion"
   const page = await getBrowser().newPage({ colorScheme: "dark", reducedMotion: "no-preference" });
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     await page
       .getByRole("button", { name: "Theme: System. Switch to Light", exact: true })
       .waitFor();
@@ -1990,6 +2035,7 @@ test("theme control works without storage and honors reduced motion", async () =
   const page = await context.newPage();
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     const control = page.getByRole("button", { name: /^Theme:/ });
     await control.click();
     await control.click();
@@ -2013,26 +2059,17 @@ test("theme control works without storage and honors reduced motion", async () =
   }
 });
 
-test("disables upload when WebGL 2 is unavailable", async () => {
+test("disables upload when WebGPU is unavailable", async () => {
   const context = await getBrowser().newContext();
   await context.addInitScript(() => {
-    const getContext = HTMLCanvasElement.prototype.getContext;
-    const patchedGetContext = function (
-      this: HTMLCanvasElement,
-      type: string,
-      ...options: unknown[]
-    ) {
-      if (type === "webgl2") return null;
-      return Reflect.apply(getContext, this, [type, ...options]);
-    };
-    HTMLCanvasElement.prototype.getContext =
-      patchedGetContext as typeof HTMLCanvasElement.prototype.getContext;
+    Object.defineProperty(navigator, "gpu", { value: undefined, configurable: true });
   });
   const page = await context.newPage();
   const issues = watchForBrowserErrors(page);
 
   try {
     await page.goto(baseUrl);
+    await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
     const dropzone = page.getByRole("button", {
       name: "Drop or browse an image to make it painterly",
     });
@@ -2045,9 +2082,15 @@ test("disables upload when WebGL 2 is unavailable", async () => {
     );
 
     assert.equal(await dropzone.isEnabled(), false);
-    await assertErrorChrome(page, "This tool needs a browser with WebGL 2 support.");
+    await assertErrorChrome(
+      page,
+      "Lukis needs WebGPU. Open it in a browser with WebGPU enabled on a supported device.",
+    );
     await page.waitForTimeout(5_100);
-    await assertErrorChrome(page, "This tool needs a browser with WebGL 2 support.");
+    await assertErrorChrome(
+      page,
+      "Lukis needs WebGPU. Open it in a browser with WebGPU enabled on a supported device.",
+    );
     assertNoBrowserErrors(issues);
   } finally {
     await context.close();

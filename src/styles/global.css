@@ -1,0 +1,9 @@
+@import "tailwindcss" source(none);
+@import "./fonts.css";
+@source "../";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Sunghyun Sans", ui-sans-serif, system-ui, sans-serif;
+}

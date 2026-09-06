@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getTransitionDuration, getRevealTiming } from "../lib/motion-timing.ts";
+import { getTransitionDuration, getRevealTiming } from "../src/lib/motion.ts";
 
 test("reveal duration places its start before the shared bounds ending", () => {
   const timing = getRevealTiming(0.8, 0.3);
@@ -23,5 +23,5 @@ test("duration resolution supports both DialKit spring modes", () => {
   assert.equal(getTransitionDuration({ type: "spring", visualDuration: 0.5 }), 0.5);
   const duration = getTransitionDuration({ type: "spring", stiffness: 200, damping: 25, mass: 1 });
   assert.ok(duration > 0 && duration < 10);
-  assert.equal(getTransitionDuration({ type: "easing", duration: 0 }), 0);
+  assert.equal(getTransitionDuration({ type: "easing", duration: 0, ease: [0, 0, 1, 1] }), 0);
 });

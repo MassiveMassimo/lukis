@@ -1,0 +1,88 @@
+---
+import Button from "../../../../../src/components/Button.astro";
+import IconDownload from "@tabler/icons/outline/download.svg";
+import IconRestart from "@tabler/icons/outline/reload.svg";
+import "../styles.css";
+const variants = ["primary", "secondary", "tertiary", "ghost"] as const;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Lukis button preview</title>
+    <link rel="icon" href="data:," />
+    <link rel="preload" href="/fonts/sunghyun-sans/SunghyunSans-Regular.subset.0.woff2" as="font" type="font/woff2" crossorigin />
+  </head>
+  <body class="m-0 bg-(--background) font-sans text-(--foreground)">
+    <main class="mx-auto max-w-[808px] px-6 py-12">
+      <h1 class="mb-4 text-2xl font-semibold">Buttons</h1>
+      <p class="mb-4">Fluid Functionalism, rendered by Astro.</p>
+      <label class="theme-picker"><input id="dark-mode" type="checkbox" /> Dark mode</label>
+      {variants.map((variant) => (
+        <section aria-label={variant} class="my-8">
+          <h2 class="mb-3 text-sm font-medium capitalize">{variant}</h2>
+          <div class="flex flex-wrap items-center gap-4">
+            <Button label="Download PNG" variant={variant} data-demo-download>
+              <IconDownload slot="icon" />
+            </Button>
+            <Button label="Compact" variant={variant} size="compact" />
+            <Button label="Restart" title="Restart" variant={variant} size="icon">
+              <IconRestart slot="icon" />
+            </Button>
+            <Button label="Unavailable" variant={variant} disabled />
+            <Button label="Processing" variant={variant} loading />
+          </div>
+        </section>
+      ))}
+      <p role="status" id="status">Ready</p>
+    </main>
+    <script>
+      import { setButtonLoading } from "../../../../../src/lib/button";
+
+      document.querySelector<HTMLInputElement>("#dark-mode")!.addEventListener("change", (event) => {
+        document.documentElement.classList.toggle("dark", (event.currentTarget as HTMLInputElement).checked);
+      });
+      for (const button of document.querySelectorAll<HTMLButtonElement>("[data-demo-download]")) {
+        button.addEventListener("click", async () => {
+          setButtonLoading(button, true);
+          document.querySelector("#status")!.textContent = "Processing…";
+          try {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            document.querySelector("#status")!.textContent = "Complete";
+          } finally {
+            setButtonLoading(button, false);
+          }
+        });
+      }
+    </script>
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    color-scheme: light;
+    --background: #fafafa;
+    --foreground: #171717;
+    --accent: #e8e8e8;
+    --muted-foreground: #626262;
+    --border: #d4d4d4;
+    --hover: #0000000a;
+    --active: #00000014;
+    --control-radius: 10px;
+    --focus-ring: #316dca;
+  }
+  :root.dark {
+    color-scheme: dark;
+    --background: #171717;
+    --foreground: #fafafa;
+    --accent: #333;
+    --muted-foreground: #aaa;
+    --border: #444;
+    --hover: #ffffff14;
+    --active: #ffffff24;
+    --focus-ring: #86aefa;
+  }
+  p, .theme-picker { font-size: 14px; color: var(--muted-foreground); }
+</style>

@@ -1,0 +1,73 @@
+---
+import "../styles/global.css";
+import "../styles/app.css";
+import Button from "../components/Button.astro";
+import ElasticSlider from "../components/ElasticSlider.astro";
+import Logo from "../components/Logo.astro";
+import Upload from "@tabler/icons/outline/upload.svg";
+import Alert from "@tabler/icons/outline/alert-circle.svg";
+import Refresh from "@tabler/icons/outline/refresh.svg";
+import Download from "@tabler/icons/outline/download.svg";
+import Desktop from "@tabler/icons/outline/device-desktop.svg";
+import Sun from "@tabler/icons/outline/sun.svg";
+import Moon from "@tabler/icons/outline/moon.svg";
+import { THEME_SCRIPT } from "../lib/theme";
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lukis — Make it painterly</title>
+    <meta name="description" content="Turn your images into paintings. Adjust the brush and paint, then download a PNG. Processed privately in your browser." />
+    <meta name="theme-color" content="#171717" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/sunghyun-sans/SunghyunSans-Regular.subset.0.woff2" crossorigin />
+    <script is:inline set:html={THEME_SCRIPT} />
+  </head>
+  <body class="font-sans antialiased">
+    <div class="ds-root">
+      <main class="app-main">
+        <section class="tool-surface" aria-label="Lukis image processor">
+          <input id="image-input" type="file" accept="image/png,image/jpeg,image/webp" aria-hidden="true" tabindex="-1" class="sr-only" />
+          <div class="result">
+            <div class="preview-stage">
+              <span class="frame-guides" aria-hidden="true">{["top", "right", "bottom", "left"].map((side) => <span class={`guide-line guide-line-${side}`}></span>)}</span>
+              <div class="logo-frame" aria-hidden="true"><Logo class="dropzone-monogram" /></div>
+              <div class="canvas-frame">
+                <button class="image-bounds dropzone" type="button" aria-label="Drop or browse an image to make it painterly" aria-describedby="image-requirements">
+                  <span class="reference-frame" aria-hidden="true"><span class="dropzone-reference"></span></span>
+                  <span class="canvas-clip" aria-hidden="true"><span class="canvas-surface"><canvas id="preview" aria-label="Painterly processed image preview"></canvas></span></span>
+                </button>
+              </div>
+              <span class="outgoing-bounds" aria-hidden="true"><span class="outgoing-image"><canvas id="outgoing"></canvas></span></span>
+              <span class="message-chrome" aria-hidden="false">
+                <span class="message-icon" aria-hidden="true"><span data-message-icon="upload"><Upload /></span><span data-message-icon="error" hidden><Alert /></span></span>
+                <span class="message-copy"><strong data-message-text>Drop or browse an image to make it painterly</strong><small id="image-requirements">PNG, JPEG, WebP · max 25 MB · output up to 1600px</small></span>
+              </span>
+            </div>
+            <div class="controls-space" hidden>
+              <div class="controls" inert>
+                <div class="control-row"><ElasticSlider label="Paint" min={0} max={100} step={1} value={78} suffix="%" /></div>
+                <div class="control-row"><ElasticSlider label="Brush" min={0.7} max={3} step={0.1} value={1.4} /></div>
+                <div class="control-actions">
+                  <Button id="restart" label="Restart with another image" title="Restart" variant="secondary" size="icon"><Refresh slot="icon" /></Button>
+                  <Button id="download" label="Download painterly PNG" title="Download PNG" variant="secondary" size="icon"><Download slot="icon" /></Button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="status sr-only" aria-live="polite" aria-atomic="true"></p>
+          <noscript><p>Enable JavaScript to process images in Lukis.</p></noscript>
+        </section>
+      </main>
+      <div class="theme-controls">
+        <Button id="theme" label="Theme: System. Switch to Light" variant="ghost" size="icon">
+          <span slot="icon" class="theme-icons"><span data-theme-icon="system"><Desktop /></span><span data-theme-icon="light" hidden><Sun /></span><span data-theme-icon="dark" hidden><Moon /></span></span>
+        </Button>
+      </div>
+    </div>
+    <script>import { mountApp } from "../lib/app"; mountApp();</script>
+  </body>
+</html>

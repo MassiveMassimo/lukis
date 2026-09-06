@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { MAX_INPUT_FILE_SIZE, createLatestUploadRunner, validateImageFile } from "../lib/upload.ts";
-import { canvasToPngBlob, outputDimensions, prepareImageBitmap } from "../lib/painterly.ts";
+import {
+  MAX_INPUT_FILE_SIZE,
+  createLatestUploadRunner,
+  validateImageFile,
+} from "../src/lib/upload.ts";
+import { canvasToPngBlob, outputDimensions, prepareImageBitmap } from "../src/lib/image.ts";
 
 test("image validation accepts supported files within the size limit", () => {
   const file = { type: "image/webp", size: MAX_INPUT_FILE_SIZE };
@@ -75,7 +79,7 @@ test("output dimensions preserve aspect ratio and cap the longest edge", () => {
   });
 });
 
-test("large images are resized before WebGL upload", async () => {
+test("large images are resized before GPU upload", async () => {
   let sourceClosed = false;
   const sourceBitmap = {
     width: 4000,
