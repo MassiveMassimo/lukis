@@ -164,8 +164,8 @@ canvas {
   position: absolute;
   top: -3rem;
   left: 50%;
-  width: 90px;
-  height: 68px;
+  width: 108px;
+  height: 81.6px;
   opacity: 0.32;
   transform: translateX(-50%) rotate(-7deg);
 }
