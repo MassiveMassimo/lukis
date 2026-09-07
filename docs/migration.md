@@ -15,24 +15,23 @@ application has no React runtime or server-side image processing.
 
 Use Anime.js for DOM motion, vgpu for browser-local WebGPU image processing, and DialKit vanilla for development tuning. If WebGPU is missing or initialization fails, lazy-load the plain TypeScript WebGL2 renderer. Both implement the same image processor interface. No React runtime or server image processing is needed. Show the persistent unsupported-browser message only if neither renderer can initialize.
 
-WebGPU startup checks the filter, blend, and presentation on detached 1px targets
+WebGPU startup checks flow, underpainting, knife marks, lighting, and presentation on detached 1px targets
 before binding the visible canvas. A failed startup releases its device and falls back without
 changing the DOM or showing temporary error chrome. Once a renderer is active,
 device loss remains a persistent error; switching renderers mid-session is not
 part of this fallback.
 
-WebGL2 uses the same Papari-Kuwahara kernel in GLSL. Its filter cache uses
-RGBA16F when `EXT_color_buffer_float` is available and RGBA8 otherwise. The latter
-adds a small rounding difference before blending and does not require a float
-extension. Both paths retain opaque RGBA8 output. Framebuffer rows retain image
+WebGL2 uses the same anisotropic Kuwahara and impasto passes in GLSL. Both
+backends use RGBA8 caches and need no floating-point framebuffer extension.
+The lighting pass produces opaque RGBA8 output. Framebuffer rows retain image
 order for snapshots and export; only presentation flips to WebGL canvas coordinates.
 
-Paint and Brush values use the vanilla `number-flow` custom element, rendered
-initially by Astro. Preserve Paint's percent suffix and Brush's single decimal
+Paint, Stroke, and Thickness use the vanilla `number-flow` custom element, rendered
+initially by Astro. Preserve percent suffixes and Stroke's single decimal
 place. Slider ARIA values update immediately, independent of digit animation.
 Keep NumberFlow's reduced-motion support enabled. Do not add its React wrapper.
 
-Preserve PNG/JPEG/WebP input validation, 25 MB input cap, 1600 px output cap, aspect ratios, image orientation, Papari-Kuwahara filter, Paint and Brush controls, elastic slider behavior, upload/replacement/restart transitions, sounds, and system/light/dark themes. Keep full-color image pixels separate from monochrome drop-target treatment. Hidden controls must be inert. Honor reduced motion and storage failures.
+Preserve PNG/JPEG/WebP input validation, 25 MB input cap, 1600 px output cap, aspect ratios, image orientation, Papari-Kuwahara filter, Paint, Stroke, and Thickness controls, elastic slider behavior, upload/replacement/restart transitions, sounds, and system/light/dark themes. Keep full-color image pixels separate from monochrome drop-target treatment. Hidden controls must be inert. Honor reduced motion and storage failures.
 
 Message text and icons must remain mounted until their exit finishes. Reversing
 a transition must start from the current appearance. The existing-image
@@ -50,7 +49,7 @@ Bounds and reveal use curves normalized at the configured visual duration;
 slider springs continue to their distance-sensitive rest thresholds. Preserve
 that distinction when changing the motion adapter.
 
-Cache the painted result by source image and brush setting. Strength changes only blend the cache with the original image. Explicitly use byte-normalized, non-sRGB textures with linear clamp-to-edge sampling and opaque output, as in the old renderer. Prepare replacement GPU resources before committing them. An unsuccessful replacement must leave the old image and export usable. Export and outgoing snapshots read a persistent output target. Handle device loss as a persistent processing error.
+Cache the direction map per source image and the underpainting and knife surface by Stroke. Paint and Thickness changes only light and blend the cache with the original image. Explicitly use byte-normalized, non-sRGB textures with linear clamp-to-edge sampling and opaque output, as in the old renderer. Prepare replacement GPU resources before committing them. An unsuccessful replacement must leave the old image and export usable. Export and outgoing snapshots read a persistent output target. Handle device loss as a persistent processing error.
 
 Group Download and Copy on the right, with Restart on the left. Both export actions
 keep their current icon while disabled and pending. Do not show a spinner. Only a

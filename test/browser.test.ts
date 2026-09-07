@@ -729,6 +729,12 @@ test("keeps a 1448 by 1086 landscape image undistorted", async () => {
     await waitForProcessedImage(page, { height: 1086, width: 1448 });
     await assertImageGeometry(page, { height: 1086, width: 1448 });
     await assertGuidesMatchFrame(page);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.waitForFunction(() => {
+      const actions = document.querySelector(".control-actions")!.getBoundingClientRect();
+      return actions.bottom <= innerHeight - 16;
+    });
+    await assertImageGeometry(page, { height: 1086, width: 1448 });
     assertNoBrowserErrors(issues);
   } finally {
     await page.close();
@@ -1100,13 +1106,14 @@ for (const reducedMotion of ["no-preference", "reduce"] as const) {
         })),
       );
       assert.deepEqual(initial, [
-        { value: 78, suffix: "%", decimals: 0, shadow: true },
+        { value: 100, suffix: "%", decimals: 0, shadow: true },
         { value: 1.4, suffix: "", decimals: 1, shadow: true },
+        { value: 65, suffix: "%", decimals: 0, shadow: true },
       ]);
       const paint = page.getByRole("slider", { name: "Paint" });
       await paint.focus();
       const state = await paint.evaluate(async (slider) => {
-        slider.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+        slider.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
         const flow = slider.querySelector("number-flow")!;
         let animated = false;
         const start = performance.now();
@@ -1119,10 +1126,15 @@ for (const reducedMotion of ["no-preference", "reduce"] as const) {
         }
         return { animated, value: flow.value, text: slider.getAttribute("aria-valuetext") };
       });
-      assert.equal(state.value, 100);
-      assert.equal(state.text, "100%");
+      assert.equal(state.value, 0);
+      assert.equal(state.text, "0%");
       assert.equal(state.animated, reducedMotion === "no-preference");
-      const brush = page.getByRole("slider", { name: "Brush" });
+      const brush = page.getByRole("slider", { name: "Stroke" });
+      const thickness = page.getByRole("slider", { name: "Thickness" });
+      await thickness.press("Home");
+      assert.equal(await thickness.getAttribute("aria-valuetext"), "0%");
+      await thickness.press("End");
+      assert.equal(await thickness.getAttribute("aria-valuetext"), "100%");
       await brush.press("End");
       assert.equal(await brush.getAttribute("aria-valuetext"), "3.0");
       await brush.press("Home");
@@ -1140,7 +1152,7 @@ for (const reducedMotion of ["no-preference", "reduce"] as const) {
       const flows = await page.evaluate(() =>
         [...document.querySelectorAll("number-flow")].map((node) => node.value),
       );
-      assert.deepEqual(flows, [10, 0.7]);
+      assert.deepEqual(flows, [10, 0.7, 100]);
       assertNoBrowserErrors(issues);
     } finally {
       await page.close();
@@ -1166,12 +1178,12 @@ test("tunes, downloads, and restarts a processed image", async () => {
     await waitForProcessedImage(page, { height: 48, width: 64 });
 
     const paint = page.getByRole("slider", { name: "Paint" });
-    const brush = page.getByRole("slider", { name: "Brush" });
-    assert.equal(await paint.getAttribute("aria-valuenow"), "78");
+    const brush = page.getByRole("slider", { name: "Stroke" });
+    assert.equal(await paint.getAttribute("aria-valuenow"), "100");
     assert.equal(await brush.getAttribute("aria-valuenow"), "1.4");
-    await paint.press("ArrowRight");
+    await paint.press("ArrowLeft");
     await brush.press("End");
-    assert.equal(await paint.getAttribute("aria-valuenow"), "79");
+    assert.equal(await paint.getAttribute("aria-valuenow"), "99");
     assert.equal(await brush.getAttribute("aria-valuenow"), "3");
 
     const downloadPromise = page.waitForEvent("download");

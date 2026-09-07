@@ -6,19 +6,21 @@ import "../styles.css";
 <body><input type="file" /><canvas></canvas><button id="download">Download PNG</button><p role="status">Starting</p>
 <label>Paint<input id="strength" type="number" value="0.78" step="0.01" /></label>
 <label>Brush<input id="brush" type="number" value="1.4" step="0.1" /></label>
+<label>Thickness<input id="thickness" type="number" value="0.65" step="0.01" /></label>
 <canvas id="reference"></canvas><button id="reference-download">Download reference</button>
 <script>
   import { createImageProcessor } from "../../../../../src/lib/processor";
-  import { createPainterlyProcessor } from "../../../painterly-reference";
+  import { createPainterlyProcessor, DEFAULT_PAINT_SETTINGS } from "../../../gouache-reference/painterly";
   const canvas = document.querySelector("canvas")!;
   const status = document.querySelector('[role="status"]')!;
   const processor = await createImageProcessor(canvas, (error) => { status.textContent = error.message; });
   const reference = createPainterlyProcessor(document.querySelector<HTMLCanvasElement>("#reference")!);
   const strength = document.querySelector<HTMLInputElement>("#strength")!;
   const brush = document.querySelector<HTMLInputElement>("#brush")!;
-  for (const input of [strength, brush]) input.addEventListener("change", async () => {
-    await processor.render(Number(strength.value), Number(brush.value));
-    reference.render(Number(strength.value), Number(brush.value));
+  const thickness = document.querySelector<HTMLInputElement>("#thickness")!;
+  for (const input of [strength, brush, thickness]) input.addEventListener("change", async () => {
+    await processor.render(Number(strength.value), Number(brush.value), Number(thickness.value));
+    reference.render(Number(strength.value), Number(brush.value), { ...DEFAULT_PAINT_SETTINGS, thickness: Number(thickness.value) * 100 });
     status.textContent = `Ready: ${processor.filterPasses}`;
   });
   status.textContent = "Initialized";

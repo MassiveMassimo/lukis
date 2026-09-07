@@ -1,8 +1,10 @@
 import { canvasToPngBlob, prepareImageBitmap } from "./image";
 import type { ImageDimensions } from "./image";
 import type { ImageProcessor } from "./processor";
-import filterShader from "../shaders/painterly.glsl?raw";
-import blendShader from "../shaders/blend.glsl?raw";
+import filterShader from "../shaders/underpaint.glsl?raw";
+import blendShader from "../shaders/impasto-light.glsl?raw";
+import flowShader from "../shaders/flow.glsl?raw";
+import knifeShader from "../shaders/knife.glsl?raw";
 
 interface RenderTarget {
   texture: WebGLTexture;
@@ -11,6 +13,8 @@ interface RenderTarget {
 interface ImageResources {
   source: WebGLTexture;
   painted: RenderTarget;
+  flow: RenderTarget;
+  knife: RenderTarget;
   output: RenderTarget;
   dimensions: ImageDimensions;
   brush: number;
@@ -51,7 +55,6 @@ export function createWebGlProcessor(
   let passes = 0;
   let pending: Promise<unknown> = Promise.resolve();
   const programs: WebGLProgram[] = [];
-  const floatTargets = !!gl.getExtension("EXT_color_buffer_float");
 
   function healthy() {
     if (disposed) throw new Error("The image processor was closed.");
@@ -108,12 +111,12 @@ export function createWebGlProcessor(
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     return result;
   }
-  function target(size: ImageDimensions, float: boolean): RenderTarget {
-    const color = texture();
+  function target(size: ImageDimensions): RenderTarget {
+    const color = texture(true);
     const framebuffer = gl.createFramebuffer();
     try {
       if (!framebuffer) throw new Error("The browser could not allocate an image target.");
-      gl.texStorage2D(gl.TEXTURE_2D, 1, float ? gl.RGBA16F : gl.RGBA8, size.width, size.height);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, size.width, size.height);
       gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, color, 0);
       if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE)
@@ -135,6 +138,8 @@ export function createWebGlProcessor(
     if (!image) return;
     gl.deleteTexture(image.source);
     releaseTarget(image.painted);
+    releaseTarget(image.flow);
+    releaseTarget(image.knife);
     releaseTarget(image.output);
   }
   function bind(program: WebGLProgram, name: string, image: WebGLTexture, unit: number) {
@@ -154,23 +159,66 @@ export function createWebGlProcessor(
   try {
     const filter = createProgram(filterShader);
     const blend = createProgram(blendShader);
+    const flowPass = createProgram(flowShader);
+    const knifePass = createProgram(knifeShader);
     const present = createProgram(presentShader);
     // Dithering can change cached RGB values before the final blend.
     gl.disable(gl.DITHER);
 
-    function draw(image: ImageResources, strength: number, brush: number) {
+    function resolution(program: WebGLProgram, image: ImageResources) {
+      gl.uniform2f(
+        gl.getUniformLocation(program, "uResolution"),
+        image.dimensions.width,
+        image.dimensions.height,
+      );
+    }
+    function draw(image: ImageResources, strength: number, brush: number, thickness: number) {
       healthy();
+      if (Number.isNaN(image.brush)) {
+        gl.viewport(
+          0,
+          0,
+          Math.ceil(image.dimensions.width / 2),
+          Math.ceil(image.dimensions.height / 2),
+        );
+        gl.bindFramebuffer(gl.FRAMEBUFFER, image.flow.framebuffer);
+        gl.useProgram(flowPass);
+        bind(flowPass, "uImage", image.source, 0);
+        resolution(flowPass, image);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        check();
+      }
       gl.viewport(0, 0, image.dimensions.width, image.dimensions.height);
       if (image.brush !== brush) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, image.painted.framebuffer);
         gl.useProgram(filter);
-        bind(filter, "uSource", image.source, 0);
+        bind(filter, "uImage", image.source, 0);
+        bind(filter, "uFlow", image.flow.texture, 1);
         gl.uniform2f(
           gl.getUniformLocation(filter, "uResolution"),
           image.dimensions.width,
           image.dimensions.height,
         );
-        gl.uniform1f(gl.getUniformLocation(filter, "uBrush"), brush);
+        gl.uniform1f(gl.getUniformLocation(filter, "uBrushSize"), brush);
+        for (const [name, value] of Object.entries({
+          uStrength: 1,
+          uDirection: 0.85,
+          uDetail: 0.6,
+          uSoftness: 0.35,
+          uPaper: 0,
+          uPigment: 0.3,
+          uColor: 0.35,
+        })) {
+          gl.uniform1f(gl.getUniformLocation(filter, name), value);
+        }
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        check();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, image.knife.framebuffer);
+        gl.useProgram(knifePass);
+        bind(knifePass, "uPaint", image.painted.texture, 0);
+        bind(knifePass, "uFlow", image.flow.texture, 1);
+        resolution(knifePass, image);
+        gl.uniform1f(gl.getUniformLocation(knifePass, "uBrushSize"), brush);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         check();
         image.brush = brush;
@@ -178,9 +226,11 @@ export function createWebGlProcessor(
       }
       gl.bindFramebuffer(gl.FRAMEBUFFER, image.output.framebuffer);
       gl.useProgram(blend);
-      bind(blend, "uSource", image.source, 0);
-      bind(blend, "uPainted", image.painted.texture, 1);
+      bind(blend, "uImage", image.source, 0);
+      bind(blend, "uSurface", image.knife.texture, 1);
+      resolution(blend, image);
       gl.uniform1f(gl.getUniformLocation(blend, "uStrength"), strength);
+      gl.uniform1f(gl.getUniformLocation(blend, "uThickness"), thickness);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       check();
     }
@@ -222,7 +272,7 @@ export function createWebGlProcessor(
       get filterPasses() {
         return passes;
       },
-      async load(file, isCurrent, strength, brush) {
+      async load(file, isCurrent, strength, brush, thickness = 0.65) {
         const request = ++generation;
         const { bitmap, dimensions } = await prepareImageBitmap(file);
         try {
@@ -230,6 +280,8 @@ export function createWebGlProcessor(
             if (!isCurrent() || request !== generation) return null;
             let source: WebGLTexture | undefined;
             let painted: RenderTarget | undefined;
+            let flow: RenderTarget | undefined;
+            let knife: RenderTarget | undefined;
             let output: RenderTarget | undefined;
             let committed = false;
             let presentationStarted = false;
@@ -237,10 +289,15 @@ export function createWebGlProcessor(
               source = texture(true);
               gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
               check();
-              painted = target(dimensions, floatTargets);
-              output = target(dimensions, false);
-              const candidate = { source, painted, output, dimensions, brush: NaN };
-              draw(candidate, strength, brush);
+              flow = target({
+                width: Math.ceil(dimensions.width / 2),
+                height: Math.ceil(dimensions.height / 2),
+              });
+              painted = target(dimensions);
+              knife = target(dimensions);
+              output = target(dimensions);
+              const candidate = { source, flow, painted, knife, output, dimensions, brush: NaN };
+              draw(candidate, strength, brush, thickness);
               if (!isCurrent() || request !== generation) return null;
               presentationStarted = true;
               show(candidate);
@@ -253,6 +310,8 @@ export function createWebGlProcessor(
               if (!committed) {
                 if (source) gl.deleteTexture(source);
                 releaseTarget(painted);
+                releaseTarget(flow);
+                releaseTarget(knife);
                 releaseTarget(output);
                 if (presentationStarted && current) show(current);
               }
@@ -262,10 +321,10 @@ export function createWebGlProcessor(
           bitmap.close();
         }
       },
-      render(strength, brush) {
+      render(strength, brush, thickness = 0.65) {
         return enqueue(() => {
           if (current) {
-            draw(current, strength, brush);
+            draw(current, strength, brush, thickness);
             show(current);
           }
         });

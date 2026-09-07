@@ -97,7 +97,11 @@ export function mountApp() {
     emptyHeight: 288,
   };
   const paintSlider = createSlider(get('[role="slider"][aria-label="Paint"]'), requestRender);
-  const brushSlider = createSlider(get('[role="slider"][aria-label="Brush"]'), requestRender);
+  const brushSlider = createSlider(get('[role="slider"][aria-label="Stroke"]'), requestRender);
+  const thicknessSlider = createSlider(
+    get('[role="slider"][aria-label="Thickness"]'),
+    requestRender,
+  );
   setEnabled(true);
   setVolume(0.5);
 
@@ -134,8 +138,14 @@ export function mountApp() {
   function targetGeometry() {
     if (!dimensions) return { width: viewport.available, height: viewport.emptyHeight, extra: 0 };
     const aspect = dimensions.width / dimensions.height;
-    const width = Math.min(viewport.available, Math.min(aspect * 0.62, 0.9) * viewport.height);
-    return { width, height: width / aspect, extra: 140 + viewport.gap };
+    const extra = 192 + viewport.gap;
+    const availableHeight = Math.max(1, viewport.height - 2 * viewport.padding - 16 - extra);
+    const width = Math.min(
+      viewport.available,
+      Math.min(aspect * 0.62, 0.9) * viewport.height,
+      availableHeight * aspect,
+    );
+    return { width, height: width / aspect, extra };
   }
   function writeGeometry() {
     const width = Math.max(1, model.width),
@@ -187,6 +197,7 @@ export function mountApp() {
     controls.inert = busy || !revealed || !!fatal;
     paintSlider.setDisabled(busy || !!fatal);
     brushSlider.setDisabled(busy || !!fatal);
+    thicknessSlider.setDisabled(busy || !!fatal);
   }
   function showError(message: string, persistent = false) {
     clearTimeout(errorTimer);
@@ -424,6 +435,7 @@ export function mountApp() {
           isCurrent,
           paintSlider.value / 100,
           brushSlider.value,
+          thicknessSlider.value / 100,
         );
         if (!next || !isCurrent()) return;
         file = nextFile;
@@ -470,7 +482,11 @@ export function mountApp() {
         renderPending = false;
         // Coalesce changes made during a GPU pass before starting the next pass.
         // oxlint-disable-next-line no-await-in-loop
-        await processor!.render(paintSlider.value / 100, brushSlider.value);
+        await processor!.render(
+          paintSlider.value / 100,
+          brushSlider.value,
+          thicknessSlider.value / 100,
+        );
       }
     })()
       .catch((cause) =>
@@ -571,7 +587,11 @@ export function mountApp() {
     try {
       const prepared = (async () => {
         await renderTask;
-        await imageProcessor.render(paintSlider.value / 100, brushSlider.value);
+        await imageProcessor.render(
+          paintSlider.value / 100,
+          brushSlider.value,
+          thicknessSlider.value / 100,
+        );
       })();
       if (action === "copy") {
         const png = prepared.then(() => imageProcessor.exportPng());
@@ -785,6 +805,7 @@ export function mountApp() {
     copyFeedback.destroy();
     paintSlider.destroy();
     brushSlider.destroy();
+    thicknessSlider.destroy();
     unsubscribeTheme();
     dialCleanup?.();
     processor?.dispose();

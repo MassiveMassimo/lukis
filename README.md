@@ -2,8 +2,9 @@
 
 Try [Lukis](https://lukis.mhmmadjid.workers.dev/).
 
-Lukis turns a local PNG, JPEG, or WebP image into a painting. Adjust Paint and
-Brush, then download a PNG. Images stay in the browser.
+This experimental branch adds [Gouache and palette-knife rendering](docs/impasto.md).
+Adjust Paint, Stroke, and Thickness, then download a PNG. Images stay in the
+browser. This branch has not been deployed to the live site linked above.
 
 Built with Astro, plain TypeScript, Anime.js, vgpu, Tailwind CSS v4, Tabler icons,
 and self-hosted Sunghyun Sans. The production app has no React runtime.
@@ -30,7 +31,7 @@ Light, and Dark.
 ## Performance and image quality
 
 The GPU pipeline caches the full painterly result for the current image and
-brush size. Paint changes use a separate blend pass. PNG export reads from a
+stroke size. Paint and Thickness changes use a separate lighting and blend pass. PNG export reads from a
 persistent output texture. Image replacement commits only after processing
 succeeds.
 

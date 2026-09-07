@@ -67,7 +67,7 @@ try {
   const downloadMs = performance.now() - downloadStart;
   await page.screenshot({ path: join(directory, "loaded.png") });
   const adjustmentStart = performance.now();
-  await page.getByRole("slider", { name: "Paint", exact: true }).press("ArrowRight");
+  await page.getByRole("slider", { name: "Paint", exact: true }).press("ArrowLeft");
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>

@@ -20,10 +20,11 @@ rapid reversal, intermediate monochrome frames, and stable preview alignment.
 Spring-curve tests cover visual duration and physical settling separately.
 
 `pnpm test:gpu` compares decoded PNG pixels against the tracked renderer in
-`test/fixtures/painterly-reference.ts`. It generates synthetic input and uses
+`test/fixtures/gouache-reference/painterly.ts` on this branch. It generates synthetic input and uses
 the tracked natural image. It checks transparent input, filter reuse, failed
-replacement rollback, and device-error handling. It runs WebGPU, WebGL2 with
-floating-point targets, and WebGL2 with the float extension disabled. It verifies
+replacement rollback, and device-error handling. It runs WebGPU, WebGL2, and WebGL2 with the float extension disabled. All
+impasto targets use RGBA8. See [the impasto contract](impasto.md) for control
+settings and reference normalization. It verifies
 the selected canvas context, so an unintended fallback cannot pass as WebGPU.
 It needs no separate reference
 checkout or existing server. Temporary images, the server, and the browser are
@@ -40,7 +41,7 @@ Filtered synthetic and natural images had mean RGB error below 0.041 on the
 variance-sector boundaries differ because of floating-point arithmetic;
 filtered output is not universally byte-identical.
 
-Fallback comparisons on 7 September 2026 passed the existing mean RGB error
+Before the impasto port, fallback comparisons on 7 September 2026 passed the existing mean RGB error
 limit of 0.1/255 for WebGL2 with floating-point targets. Without the extension,
 the RGBA8 cache adds rounding before blending; tested mean error stayed below
 0.24/255 (limit 0.3). Both WebGL2 paths kept fewer than 0.01% of channels more

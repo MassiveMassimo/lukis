@@ -9,8 +9,9 @@ export interface ImageProcessor {
     isCurrent: () => boolean,
     strength: number,
     brush: number,
+    thickness?: number,
   ): Promise<ImageDimensions | null>;
-  render(strength: number, brush: number): Promise<void>;
+  render(strength: number, brush: number, thickness?: number): Promise<void>;
   snapshot(canvas: HTMLCanvasElement): Promise<void>;
   exportPng(): Promise<Blob>;
   download(filename: string): Promise<void>;

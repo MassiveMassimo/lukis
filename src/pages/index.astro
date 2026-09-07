@@ -41,8 +41,9 @@ import { THEME_SCRIPT } from "../lib/theme";
             <UploadPreview />
             <div class="controls-space h-0" hidden>
               <div class="controls relative top-6 m-auto grid gap-4 px-2 compact:top-4" inert>
-                <div class="control-row w-full max-w-lg justify-self-center"><ElasticSlider label="Paint" min={0} max={100} step={1} value={78} suffix="%" notches={[10, 20, 30, 40, 50, 60, 70, 80, 90]} /></div>
-                <div class="control-row w-full max-w-lg justify-self-center"><ElasticSlider label="Brush" min={0.7} max={3} step={0.1} value={1.4} notches={[1, 1.5, 2, 2.5]} /></div>
+                <div class="control-row w-full max-w-lg justify-self-center"><ElasticSlider label="Paint" min={0} max={100} step={1} value={100} suffix="%" notches={[10, 20, 30, 40, 50, 60, 70, 80, 90]} /></div>
+                <div class="control-row w-full max-w-lg justify-self-center"><ElasticSlider label="Stroke" min={0.7} max={3} step={0.1} value={1.4} notches={[1, 1.5, 2, 2.5]} /></div>
+                <div class="control-row w-full max-w-lg justify-self-center"><ElasticSlider label="Thickness" min={0} max={100} step={1} value={65} suffix="%" notches={[10, 20, 30, 40, 50, 60, 70, 80, 90]} /></div>
                 <div class="control-actions flex w-full max-w-lg items-center justify-between justify-self-center">
                   <Button id="restart" label="Restart with another image" title="Restart" variant="secondary" size="icon"><Refresh slot="icon" /></Button>
                   <div class="export-actions flex items-center gap-2" role="group" aria-label="Save image">

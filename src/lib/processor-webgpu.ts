@@ -3,12 +3,16 @@ import type { Gpu, Surface, Target, Texture } from "vgpu";
 import { canvasToPngBlob, prepareImageBitmap } from "./image";
 import type { ImageDimensions } from "./image";
 import type { ImageProcessor } from "./processor";
-import filterShader from "../shaders/painterly.wgsl?raw";
-import blendShader from "../shaders/blend.wgsl?raw";
+import filterShader from "../shaders/underpaint.wgsl?raw";
+import blendShader from "../shaders/impasto-light.wgsl?raw";
+import flowShader from "../shaders/flow.wgsl?raw";
+import knifeShader from "../shaders/knife.wgsl?raw";
 
 interface ImageResources {
   source: Texture;
   painted: Target;
+  flow: Target;
+  knife: Target;
   output: Target;
   dimensions: ImageDimensions;
   brush: number;
@@ -17,6 +21,8 @@ interface ImageResources {
 function release(image: ImageResources | null) {
   image?.source.destroy();
   image?.painted.color.destroy();
+  image?.flow.color.destroy();
+  image?.knife.color.destroy();
   image?.output.color.destroy();
 }
 
@@ -55,6 +61,8 @@ export async function createWebGpuProcessor(
     });
     const filter = effect(gpu, filterShader);
     const blend = effect(gpu, blendShader);
+    const flowPass = effect(gpu, flowShader);
+    const knifePass = effect(gpu, knifeShader);
     const present = effect(
       gpu,
       `
@@ -115,19 +123,37 @@ export async function createWebGpuProcessor(
         await frame(gpu, (f) => f.pass(canvasSurface!, present)).done;
       });
     }
-    async function draw(image: ImageResources, strength: number, brush: number, visible: boolean) {
+    async function draw(
+      image: ImageResources,
+      strength: number,
+      brush: number,
+      thickness: number,
+      visible: boolean,
+    ) {
       healthy();
       const settings = {
         resolution: [image.dimensions.width, image.dimensions.height],
         strength,
         brush,
+        thickness,
       };
       const needsFilter = image.brush !== brush;
       await checked(async () => {
-        filter.set({ source: image.source, imageSampler, settings });
-        blend.set({ source: image.source, painted: image.painted.color, imageSampler, settings });
+        flowPass.set({ source: image.source, imageSampler, settings });
+        filter.set({ source: image.source, flow: image.flow.color, imageSampler, settings });
+        knifePass.set({
+          paint: image.painted.color,
+          flow: image.flow.color,
+          imageSampler,
+          settings,
+        });
+        blend.set({ source: image.source, painted: image.knife.color, imageSampler, settings });
         const rendered = frame(gpu, (f) => {
-          if (needsFilter) f.pass(image.painted, filter);
+          if (Number.isNaN(image.brush)) f.pass(image.flow, flowPass);
+          if (needsFilter) {
+            f.pass(image.painted, filter);
+            f.pass(image.knife, knifePass);
+          }
           f.pass(image.output, blend);
           if (visible && canvasSurface) {
             present.set({ image: image.output.color, imageSampler });
@@ -159,6 +185,8 @@ export async function createWebGpuProcessor(
     // can fall back without replacing any DOM nodes or showing error chrome.
     let probeSource: Texture | undefined;
     let probePainted: Target | undefined;
+    let probeFlow: Target | undefined;
+    let probeKnife: Target | undefined;
     let probeOutput: Target | undefined;
     let probeSurface: Surface | undefined;
     try {
@@ -167,18 +195,23 @@ export async function createWebGpuProcessor(
         format: "rgba8unorm",
         usage: ["texture_binding"],
       });
-      probePainted = target(gpu, { size: [1, 1], format: "rgba16float" });
+      probePainted = target(gpu, { size: [1, 1], format: "rgba8unorm" });
+      probeFlow = target(gpu, { size: [1, 1], format: "rgba8unorm" });
+      probeKnife = target(gpu, { size: [1, 1], format: "rgba8unorm" });
       probeOutput = target(gpu, { size: [1, 1], format: "rgba8unorm" });
       await draw(
         {
           source: probeSource,
           painted: probePainted,
+          flow: probeFlow,
+          knife: probeKnife,
           output: probeOutput,
           dimensions: { width: 1, height: 1 },
           brush: NaN,
         },
         0.5,
         1,
+        0.65,
         false,
       );
       await checked(async () => {
@@ -196,6 +229,8 @@ export async function createWebGpuProcessor(
       probeSurface?.dispose();
       probeSource?.destroy();
       probePainted?.color.destroy();
+      probeFlow?.color.destroy();
+      probeKnife?.color.destroy();
       probeOutput?.color.destroy();
     }
     initialized = true;
@@ -203,7 +238,7 @@ export async function createWebGpuProcessor(
       get filterPasses() {
         return passes;
       },
-      async load(file, isCurrent, strength, brush) {
+      async load(file, isCurrent, strength, brush, thickness = 0.65) {
         const request = ++generation;
         const prepared = await prepareImageBitmap(file);
         try {
@@ -213,6 +248,8 @@ export async function createWebGpuProcessor(
             const size = [dimensions.width, dimensions.height] as const;
             let source: Texture | undefined;
             let painted: Target | undefined;
+            let flow: Target | undefined;
+            let knife: Target | undefined;
             let output: Target | undefined;
             let committed = false;
             let presentationStarted = false;
@@ -223,7 +260,12 @@ export async function createWebGpuProcessor(
                   format: "rgba8unorm",
                   usage: ["texture_binding", "copy_dst", "render_attachment"],
                 });
-                painted = target(gpu, { size, format: "rgba16float" });
+                painted = target(gpu, { size, format: "rgba8unorm" });
+                flow = target(gpu, {
+                  size: [Math.ceil(dimensions.width / 2), Math.ceil(dimensions.height / 2)],
+                  format: "rgba8unorm",
+                });
+                knife = target(gpu, { size, format: "rgba8unorm" });
                 output = target(gpu, { size, format: "rgba8unorm" });
                 gpu.gpu.queue.copyExternalImageToTexture(
                   { source: bitmap, flipY: false },
@@ -236,11 +278,13 @@ export async function createWebGpuProcessor(
               const candidate: ImageResources = {
                 source: source!,
                 painted: painted!,
+                flow: flow!,
+                knife: knife!,
                 output: output!,
                 dimensions,
                 brush: NaN,
               };
-              await draw(candidate, strength, brush, false);
+              await draw(candidate, strength, brush, thickness, false);
               if (!isCurrent() || request !== generation) return null;
               presentationStarted = true;
               await show(candidate);
@@ -254,6 +298,8 @@ export async function createWebGpuProcessor(
               if (!committed) {
                 source?.destroy();
                 painted?.color.destroy();
+                flow?.color.destroy();
+                knife?.color.destroy();
                 output?.color.destroy();
                 if (presentationStarted && !disposed && !failure) {
                   if (current) await show(current);
@@ -270,9 +316,9 @@ export async function createWebGpuProcessor(
           prepared.bitmap.close();
         }
       },
-      render(strength, brush) {
+      render(strength, brush, thickness = 0.65) {
         return enqueue(async () => {
-          if (current) await draw(current, strength, brush, true);
+          if (current) await draw(current, strength, brush, thickness, true);
         });
       },
       snapshot(output) {

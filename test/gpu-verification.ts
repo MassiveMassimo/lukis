@@ -23,6 +23,7 @@ try {
       "test/fixtures/buttons/astro.config.mjs",
       "test/fixtures/buttons/tsconfig.json",
       "test/fixtures/painterly-reference.ts",
+      "test/fixtures/gouache-reference",
       "package.json",
       "tsconfig.json",
     ].map((entry) => cp(join(root, entry), join(workspace, entry), { recursive: true })),
@@ -138,18 +139,25 @@ try {
         max = 0,
         over2 = 0;
       const [a, b] = decoded;
+      let onGrainBoundary = 0;
       for (let i = 0; i < a.data.length; i++) {
         if (i % 4 === 3) continue;
         const delta = Math.abs(a.data[i] - b.data[i]);
         total += delta;
         max = Math.max(max, delta);
-        if (delta > 2) over2++;
+        if (delta > 2) {
+          over2++;
+          const pixel = Math.floor(i / 4);
+          if ((pixel % a.width) % 25 === 12 || Math.floor(pixel / a.width) % 25 === 12)
+            onGrainBoundary++;
+        }
       }
       return {
         dimensions: decoded.map(({ width, height }) => ({ width, height })),
         meanAbsoluteError: total / (a.width * a.height * 3),
         max,
         fractionOver2: over2 / (a.width * a.height * 3),
+        onGrainBoundary,
       };
     }, images);
   }
@@ -174,6 +182,24 @@ try {
     strengths.push({ value, comparison: await savePair(`strength-${value}`) });
     assert.equal(await page.getByRole("status").textContent(), "Ready: 1");
   }
+  const thicknesses = [];
+  for (const value of [0, 1]) {
+    await page.getByLabel("Thickness").fill(String(value));
+    await page.getByLabel("Thickness").press("Tab");
+    thicknesses.push({ value, comparison: await savePair(`thickness-${value}`) });
+    assert.equal(
+      await page.getByRole("status").textContent(),
+      "Ready: 1",
+      "Thickness must reuse the paint surface",
+    );
+  }
+  const relief = await comparePaths([
+    `${directory}/thickness-0-gpu.png`,
+    `${directory}/thickness-1-gpu.png`,
+  ]);
+  assert.ok(relief.meanAbsoluteError > 0.05, "Thickness must change the exported paint lighting");
+  await page.getByLabel("Thickness").fill("0.65");
+  await page.getByLabel("Thickness").press("Tab");
   await page.getByLabel("Paint").fill("0.5");
   await page.getByLabel("Paint").press("Tab");
   await page.waitForTimeout(100);
@@ -217,15 +243,26 @@ try {
   });
   await page.getByRole("status").filter({ hasText: "Ready: 4" }).waitFor();
   const transparent = await savePair("transparent");
+  console.log(
+    JSON.stringify({
+      renderer,
+      comparison,
+      natural,
+      transparent,
+      beforeInvalid,
+      strengths,
+      thicknesses,
+    }),
+  );
   for (const sample of [
     comparison,
     natural,
     transparent,
     beforeInvalid,
     ...strengths.map((item) => item.comparison),
+    ...thicknesses.map((item) => item.comparison),
   ]) {
-    // RGBA8 cache quantizes the filtered color before blending, by at most 1/255.
-    const tolerance = renderer === "webgl2-rgba8" ? 0.3 : 0.1;
+    const tolerance = 0.1;
     assert.ok(
       sample.meanAbsoluteError < tolerance,
       `Average RGB error ${sample.meanAbsoluteError} must remain below ${tolerance} of 255`,
@@ -239,6 +276,7 @@ try {
     { width: 800, height: 600 },
     { width: 800, height: 600 },
   ]);
+  assert.equal(strengths.find((item) => item.value === 0)!.comparison.max, 0);
   const fatalMessage = webgl
     ? "The graphics device was lost. Reload Lukis to continue."
     : "Injected GPU memory failure";

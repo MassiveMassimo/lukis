@@ -7,9 +7,9 @@
 - Reserve global CSS for Tailwind configuration, shared semantic tokens, fonts, document defaults, and document-wide theme behavior.
 - Preserve Anime.js transform ownership and runtime selectors when moving styles. Scope styles for dynamically created message nodes through a stable parent.
 - Preserve the Papari-Kuwahara filter, local image custody, opaque PNG output, and 1600px limit.
-- Paint changes must reuse the filtered image. Refilter only when the image or Brush changes.
+- This branch adds the Gouache/impasto effect. Paint and Thickness changes must reuse the underpainting and knife surface. Refilter only when the image or Stroke changes. Cache the half-resolution direction map per image. See `docs/impasto.md`.
 - Keep image replacement transactional. A failed replacement must preserve the last valid export.
 - Preserve keyboard and pointer slider input, reduced motion, theme persistence, and image proportions during motion.
 - Run `pnpm check` and `pnpm test:browser`. Browser tests use Helium with isolated profiles.
-- Use the tracked reference renderer in `test/fixtures/painterly-reference.ts` for image comparisons and the browser tests for motion contracts. See `docs/validation.md`.
+- Use `test/fixtures/gouache-reference/painterly.ts` for impasto image comparisons and the browser tests for motion contracts. Keep the earlier `test/fixtures/painterly-reference.ts` for historical comparison. See `docs/validation.md`.
 - Keep deployment status explicit. Local checks do not prove a production deployment.
