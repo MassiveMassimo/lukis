@@ -2225,6 +2225,65 @@ test("theme icons inherit one color transition without flashing", async () => {
   }
 });
 
+for (const iconName of ["upload", "error"] as const) {
+  test(`${iconName} icon inherits its semantic color without a theme flash`, async () => {
+    const page = await getBrowser().newPage({
+      colorScheme: "light",
+      reducedMotion: "no-preference",
+    });
+    try {
+      await page.addInitScript(() => localStorage.setItem("lukis:theme:v1", "light"));
+      await page.goto(baseUrl);
+      await page.waitForFunction(() => document.documentElement.dataset.processorState === "ready");
+      if (iconName === "error") {
+        await page.locator("#image-input").setInputFiles({
+          name: "invalid.png",
+          mimeType: "image/png",
+          buffer: Buffer.from("invalid"),
+        });
+      }
+      await page.waitForFunction((name) => {
+        const icon = document.querySelector<HTMLElement>(`[data-message-icon="${name}"]`)!;
+        return !icon.hidden && getComputedStyle(icon).opacity === "1";
+      }, iconName);
+      const result = await page.evaluate(async (name) => {
+        const icon = document.querySelector<HTMLElement>(`[data-message-icon="${name}"]`)!;
+        const svg = icon.querySelector("svg")!;
+        const owner = name === "error" ? icon : icon.parentElement!;
+        const mismatches: { color: string; stroke: string }[] = [];
+        let frames = 0;
+        for (let toggle = 0; toggle < 2; toggle++) {
+          document.querySelector<HTMLButtonElement>("#theme")!.click();
+          const start = performance.now();
+          while (performance.now() - start < 650) {
+            // oxlint-disable-next-line no-await-in-loop
+            await new Promise(requestAnimationFrame);
+            frames++;
+            const color = getComputedStyle(owner).color;
+            const stroke = getComputedStyle(svg).stroke;
+            if (stroke !== color) mismatches.push({ color, stroke });
+          }
+        }
+        const probe = document.createElement("span");
+        probe.style.color = name === "error" ? "var(--destructive)" : "var(--muted-foreground)";
+        document.body.append(probe);
+        const expectedColor = getComputedStyle(probe).color;
+        probe.remove();
+        return { frames, mismatches, expectedColor, finalColor: getComputedStyle(svg).stroke };
+      }, iconName);
+      assert.ok(result.frames > 2, "Capture intermediate frames in both theme directions");
+      assert.deepEqual(
+        result.mismatches,
+        [],
+        "The icon must inherit its owner's color on every frame",
+      );
+      assert.equal(result.finalColor, result.expectedColor, "Preserve the icon's semantic color");
+    } finally {
+      await page.close();
+    }
+  });
+}
+
 test("theme control works without storage and honors reduced motion", async () => {
   const context = await getBrowser().newContext({ colorScheme: "light", reducedMotion: "reduce" });
   await context.addInitScript(() => {

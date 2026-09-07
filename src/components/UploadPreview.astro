@@ -37,6 +37,12 @@ import Alert from "@tabler/icons/outline/alert-circle.svg";
 </div>
 
 <style>
+  /* Upload inherits muted color; the error wrapper owns destructive color.
+     Descendants must inherit those transitions instead of starting another. */
+  :global(html.theme-transitioning) [data-message-icon="upload"],
+  :global(html.theme-transitioning) [data-message-icon] :global(*) {
+    transition: none !important;
+  }
   .preview-stage { --empty-width: min(calc(100vw - var(--page-padding) * 2), 56rem); }
   .dropzone-reference {
     mask-image:
