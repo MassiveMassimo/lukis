@@ -155,6 +155,13 @@ const sizeClasses = {
     transition: stroke-width 80ms;
   }
 
+  /* Animate color on the button once. Nested currentColor transitions can flash
+     when the document's temporary theme transition ends. */
+  :global(html.theme-transitioning) .content,
+  :global(html.theme-transitioning) .content :global(*) {
+    transition-property: stroke-width !important;
+  }
+
   .fluid-button:hover .icon :global(svg) {
     stroke-width: 2;
   }

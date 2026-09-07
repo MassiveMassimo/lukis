@@ -2184,6 +2184,47 @@ test("theme colors crossfade for 180ms, but not on mount or with reduced motion"
   }
 });
 
+test("theme icons inherit one color transition without flashing", async () => {
+  const page = await getBrowser().newPage({ colorScheme: "dark", reducedMotion: "no-preference" });
+  try {
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => document.documentElement.dataset.processorState === "ready");
+    await page.locator("#theme").hover();
+    const result = await page.evaluate(async () => {
+      const button = document.querySelector<HTMLButtonElement>("#theme")!;
+      const mismatches: { theme: string | undefined; color: string; stroke: string }[] = [];
+      let frames = 0;
+      // System-dark -> Light -> Dark covers both color directions and class cleanup.
+      for (let toggle = 0; toggle < 2; toggle++) {
+        button.click();
+        const start = performance.now();
+        while (performance.now() - start < 650) {
+          // oxlint-disable-next-line no-await-in-loop
+          await new Promise(requestAnimationFrame);
+          frames++;
+          const color = getComputedStyle(button).color;
+          for (const svg of button.querySelectorAll<SVGElement>(
+            "[data-theme-icon]:not([hidden]) svg",
+          )) {
+            const stroke = getComputedStyle(svg).stroke;
+            if (stroke !== color)
+              mismatches.push({ theme: document.documentElement.dataset.theme, color, stroke });
+          }
+        }
+      }
+      return { frames, mismatches };
+    });
+    assert.ok(result.frames > 2, "Capture intermediate color-transition frames");
+    assert.deepEqual(
+      result.mismatches,
+      [],
+      "Icon strokes must follow the button color on every frame",
+    );
+  } finally {
+    await page.close();
+  }
+});
+
 test("theme control works without storage and honors reduced motion", async () => {
   const context = await getBrowser().newContext({ colorScheme: "light", reducedMotion: "reduce" });
   await context.addInitScript(() => {
