@@ -72,6 +72,12 @@ export function createWebGlProcessor(
   }
   canvas.addEventListener("webglcontextlost", onContextLost);
 
+  function releaseContext() {
+    canvas.removeEventListener("webglcontextlost", onContextLost);
+    for (const program of programs) gl.deleteProgram(program);
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+  }
+
   function createProgram(source: string) {
     const result = gl.createProgram();
     if (!result) throw new Error("The browser could not create a shader program.");
@@ -136,6 +142,24 @@ export function createWebGlProcessor(
     gl.deleteTexture(image.source);
     releaseTarget(image.painted);
     releaseTarget(image.output);
+  }
+  function createImageResources(bitmap: ImageBitmap, dimensions: ImageDimensions): ImageResources {
+    let source: WebGLTexture | undefined;
+    let painted: RenderTarget | undefined;
+    let output: RenderTarget | undefined;
+    try {
+      source = texture(true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
+      check();
+      painted = target(dimensions, floatTargets);
+      output = target(dimensions, false);
+      return { source, painted, output, dimensions, brush: NaN };
+    } catch (error) {
+      if (source) gl.deleteTexture(source);
+      releaseTarget(painted);
+      releaseTarget(output);
+      throw error;
+    }
   }
   function bind(program: WebGLProgram, name: string, image: WebGLTexture, unit: number) {
     gl.activeTexture(gl.TEXTURE0 + unit);
@@ -228,18 +252,10 @@ export function createWebGlProcessor(
         try {
           return await enqueue(() => {
             if (!isCurrent() || request !== generation) return null;
-            let source: WebGLTexture | undefined;
-            let painted: RenderTarget | undefined;
-            let output: RenderTarget | undefined;
+            const candidate = createImageResources(bitmap, dimensions);
             let committed = false;
             let presentationStarted = false;
             try {
-              source = texture(true);
-              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
-              check();
-              painted = target(dimensions, floatTargets);
-              output = target(dimensions, false);
-              const candidate = { source, painted, output, dimensions, brush: NaN };
               draw(candidate, strength, brush);
               if (!isCurrent() || request !== generation) return null;
               presentationStarted = true;
@@ -251,9 +267,7 @@ export function createWebGlProcessor(
               return dimensions;
             } finally {
               if (!committed) {
-                if (source) gl.deleteTexture(source);
-                releaseTarget(painted);
-                releaseTarget(output);
+                release(candidate);
                 if (presentationStarted && current) show(current);
               }
             }
@@ -305,16 +319,12 @@ export function createWebGlProcessor(
         generation++;
         release(current);
         current = null;
-        canvas.removeEventListener("webglcontextlost", onContextLost);
-        for (const value of programs) gl.deleteProgram(value);
-        gl.getExtension("WEBGL_lose_context")?.loseContext();
+        releaseContext();
       },
     };
   } catch (error) {
     disposed = true;
-    canvas.removeEventListener("webglcontextlost", onContextLost);
-    for (const value of programs) gl.deleteProgram(value);
-    gl.getExtension("WEBGL_lose_context")?.loseContext();
+    releaseContext();
     throw error;
   }
 }
