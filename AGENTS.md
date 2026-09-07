@@ -2,6 +2,7 @@
 
 - This is a static Astro app. Use Astro components and plain TypeScript. Do not add React or TSX.
 - Use Anime.js for motion, vgpu for WebGPU, Tailwind v4, and Tabler SVG icons.
+- Keep WebGPU primary and lazy-load WebGL2 on startup failure. Both renderers must meet the same image, caching, export, and motion contracts. Device loss after startup remains a persistent error.
 - Prefer Tailwind utilities in Astro markup. Keep complex component effects in scoped styles in the owning component.
 - Reserve global CSS for Tailwind configuration, shared semantic tokens, fonts, document defaults, and document-wide theme behavior.
 - Preserve Anime.js transform ownership and runtime selectors when moving styles. Scope styles for dynamically created message nodes through a stable parent.

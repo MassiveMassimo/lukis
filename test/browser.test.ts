@@ -396,9 +396,24 @@ async function captureRevealCenterSamples(
   );
 }
 
-function getBrowser(): Browser {
+function getBrowser() {
   if (!browser) throw new Error("The browser did not start.");
-  return browser;
+  const runningBrowser = browser;
+  async function newContext(options?: Parameters<Browser["newContext"]>[0]) {
+    const context = await runningBrowser.newContext(options);
+    if (process.env.LUKIS_TEST_RENDERER === "webgl2") {
+      await context.addInitScript(() => {
+        Object.defineProperty(navigator, "gpu", { value: undefined, configurable: true });
+      });
+    }
+    return context;
+  }
+  return {
+    newContext,
+    async newPage(options?: Parameters<Browser["newPage"]>[0]) {
+      return (await newContext(options)).newPage();
+    },
+  };
 }
 
 async function waitForProcessedImage(page: Page, expected: ImageExpectation): Promise<void> {
@@ -2686,10 +2701,119 @@ test("unavailable image clipboard disables Copy but preserves Download", async (
   }
 });
 
-test("disables upload when WebGPU is unavailable", async () => {
+for (const unavailable of ["missing", "rejected", "pipeline failure", "surface failure"] as const) {
+  test(`uses WebGL2 seamlessly when WebGPU is ${unavailable}`, async () => {
+    const page = await getBrowser().newPage({ reducedMotion: "reduce" });
+    const issues = watchForBrowserErrors(page);
+    try {
+      await page.addInitScript((mode) => {
+        if (mode === "surface failure") {
+          const getContext = HTMLCanvasElement.prototype.getContext;
+          HTMLCanvasElement.prototype.getContext = function (
+            this: HTMLCanvasElement,
+            type: string,
+            ...args: unknown[]
+          ) {
+            if (type === "webgpu") return null;
+            return Reflect.apply(getContext, this, [type, ...args]);
+          } as typeof getContext;
+          return;
+        }
+        if (mode === "pipeline failure") {
+          GPUDevice.prototype.createRenderPipeline = () => {
+            throw new Error("Pipeline unavailable");
+          };
+          return;
+        }
+        Object.defineProperty(navigator, "gpu", {
+          configurable: true,
+          value:
+            mode === "missing"
+              ? undefined
+              : {
+                  requestAdapter: () => Promise.reject(new Error("Adapter unavailable")),
+                },
+        });
+      }, unavailable);
+      await page.goto(baseUrl);
+      await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
+      assert.equal(await page.locator('input[type="file"]').isEnabled(), true);
+      await page.locator('input[type="file"]').setInputFiles({
+        name: "fallback.png",
+        mimeType: "image/png",
+        buffer: await createSplitColorPng(page, 96, 64),
+      });
+      await waitForProcessedImage(page, { width: 96, height: 64 });
+      assert.equal(
+        await page.evaluate(() => !!document.querySelector("canvas")!.getContext("webgl2")),
+        true,
+      );
+      await assertImageGeometry(page, { width: 96, height: 64 });
+      if (unavailable === "missing" && process.env.LUKIS_TEST_SCREENSHOT) {
+        await page.screenshot({ path: process.env.LUKIS_TEST_SCREENSHOT });
+      }
+      assert.ok(await downloadPixels(page));
+      assertNoBrowserErrors(issues);
+    } finally {
+      await page.close();
+    }
+  });
+}
+
+test("WebGL2 allocation failure preserves the previous image and export", async () => {
+  const page = await getBrowser().newPage({ reducedMotion: "reduce" });
+  const issues = watchForBrowserErrors(page);
+  try {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "gpu", { value: undefined, configurable: true });
+    });
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => document.documentElement.dataset.processorState === "ready");
+    const input = {
+      name: "valid.png",
+      mimeType: "image/png",
+      buffer: await createSplitColorPng(page, 96, 64),
+    };
+    await page.locator('input[type="file"]').setInputFiles(input);
+    await waitForProcessedImage(page, { width: 96, height: 64 });
+    const baseline = await downloadPixels(page);
+    await page.evaluate(() => {
+      const allocate = WebGL2RenderingContext.prototype.texStorage2D;
+      WebGL2RenderingContext.prototype.texStorage2D = function () {
+        WebGL2RenderingContext.prototype.texStorage2D = allocate;
+        throw new Error("Injected texture allocation failure");
+      };
+    });
+    await page.locator('input[type="file"]').setInputFiles({ ...input, name: "replacement.png" });
+    await page.waitForFunction(() =>
+      document.querySelector(".status")?.textContent?.includes("That image could not be processed"),
+    );
+    assert.equal(await downloadPixels(page), baseline);
+    await page.locator('input[type="file"]').setInputFiles(input);
+    await waitForProcessedImage(page, { width: 96, height: 64 });
+    assert.equal(await downloadPixels(page), baseline);
+    assert.equal(issues.consoleErrors.length, 1);
+    assert.match(issues.consoleErrors[0], /Injected texture allocation failure/);
+    issues.consoleErrors.length = 0;
+    assertNoBrowserErrors(issues);
+  } finally {
+    await page.close();
+  }
+});
+
+test("disables upload only when both graphics APIs are unavailable", async () => {
   const context = await getBrowser().newContext();
   await context.addInitScript(() => {
     Object.defineProperty(navigator, "gpu", { value: undefined, configurable: true });
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (
+      this: HTMLCanvasElement,
+      type: string,
+      ...args: unknown[]
+    ) {
+      if (type === "webgl2") return null;
+      return Reflect.apply(getContext, this, [type, ...args]);
+    } as typeof getContext;
   });
   const page = await context.newPage();
   const issues = watchForBrowserErrors(page);
@@ -2710,12 +2834,12 @@ test("disables upload when WebGPU is unavailable", async () => {
     assert.equal(await dropzone.isEnabled(), false);
     await assertErrorChrome(
       page,
-      "Lukis needs WebGPU. Open it in a browser with WebGPU enabled on a supported device.",
+      "Lukis needs WebGPU or WebGL 2. Open it in a browser with graphics acceleration enabled on a supported device.",
     );
     await page.waitForTimeout(5_100);
     await assertErrorChrome(
       page,
-      "Lukis needs WebGPU. Open it in a browser with WebGPU enabled on a supported device.",
+      "Lukis needs WebGPU or WebGL 2. Open it in a browser with graphics acceleration enabled on a supported device.",
     );
     assertNoBrowserErrors(issues);
   } finally {

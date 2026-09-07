@@ -726,7 +726,10 @@ export function mountApp() {
       if (!disposed) {
         processorStarting = false;
         document.documentElement.dataset.processorState = "error";
-        showError(cause instanceof Error ? cause.message : "WebGPU is unavailable.", true);
+        showError(
+          cause instanceof Error ? cause.message : "Image processing is unavailable.",
+          true,
+        );
       }
     });
   if (import.meta.env.DEV) {

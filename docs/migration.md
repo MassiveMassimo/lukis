@@ -13,7 +13,19 @@ Lukis is a static Astro image editor with plain TypeScript, Tabler SVGs,
 Tailwind v4, Sunghyun Sans, and a Fluid Functionalism button port. The production
 application has no React runtime or server-side image processing.
 
-Use Anime.js for DOM motion, vgpu for browser-local image processing, and DialKit vanilla for development tuning. WebGPU is required; show a persistent unsupported-browser message when unavailable. There is no WebGL fallback or server image processing.
+Use Anime.js for DOM motion, vgpu for browser-local WebGPU image processing, and DialKit vanilla for development tuning. If WebGPU is missing or initialization fails, lazy-load the plain TypeScript WebGL2 renderer. Both implement the same image processor interface. No React runtime or server image processing is needed. Show the persistent unsupported-browser message only if neither renderer can initialize.
+
+WebGPU startup checks the filter, blend, and presentation on detached 1px targets
+before binding the visible canvas. A failed startup releases its device and falls back without
+changing the DOM or showing temporary error chrome. Once a renderer is active,
+device loss remains a persistent error; switching renderers mid-session is not
+part of this fallback.
+
+WebGL2 uses the same Papari-Kuwahara kernel in GLSL. Its filter cache uses
+RGBA16F when `EXT_color_buffer_float` is available and RGBA8 otherwise. The latter
+adds a small rounding difference before blending and does not require a float
+extension. Both paths retain opaque RGBA8 output. Framebuffer rows retain image
+order for snapshots and export; only presentation flips to WebGL canvas coordinates.
 
 Paint and Brush values use the vanilla `number-flow` custom element, rendered
 initially by Astro. Preserve Paint's percent suffix and Brush's single decimal

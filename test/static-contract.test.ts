@@ -46,9 +46,12 @@ test("the Astro route processes images locally and loads the GPU module separate
   const page = await read("src/pages/index.astro");
   const app = await read("src/lib/app.ts");
   const processor = await read("src/lib/processor.ts");
+  const webgpu = await read("src/lib/processor-webgpu.ts");
+  const webgl = await read("src/lib/processor-webgl.ts");
   assert.doesNotMatch(page, /name="robots"[^>]*\b(?:noindex|nofollow)\b/);
   assert.match(app, /import\("\.\/processor"\)/);
-  assert.doesNotMatch(app + processor, /\bfetch\s*\(|XMLHttpRequest/);
-  assert.doesNotMatch(processor, /getContext\(["']webgl/);
-  assert.match(processor, /image\.brush !== brush/);
+  assert.doesNotMatch(app + processor + webgpu + webgl, /\bfetch\s*\(|XMLHttpRequest/);
+  assert.match(processor, /import\("\.\/processor-webgl"\)/);
+  assert.match(webgpu, /image\.brush !== brush/);
+  assert.match(webgl, /image\.brush !== brush/);
 });

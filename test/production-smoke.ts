@@ -5,6 +5,7 @@ import { chromium, expect } from "@playwright/test";
 
 const baseUrl = process.argv[2] ?? "http://127.0.0.1:4189";
 const directory = process.argv[3] ?? "analysis-output/production-smoke";
+const renderer = process.env.LUKIS_TEST_RENDERER === "webgl2" ? "webgl2" : "webgpu";
 await mkdir(directory, { recursive: true });
 const browser = await chromium.launch({
   executablePath: "/Applications/Helium.app/Contents/MacOS/Helium",
@@ -18,6 +19,15 @@ try {
     colorScheme: "light",
   });
   const errors: string[] = [];
+  const requestedScripts: string[] = [];
+  page.on("request", (request) => {
+    if (request.resourceType() === "script") requestedScripts.push(request.url());
+  });
+  if (renderer === "webgl2") {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "gpu", { value: undefined, configurable: true });
+    });
+  }
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
@@ -34,6 +44,16 @@ try {
   await page.locator("#image-input").setInputFiles("public/window-reference.webp");
   await expect(page.locator("#download")).toBeEnabled();
   await expect(page.locator(".controls")).not.toHaveAttribute("inert", "");
+  assert.equal(
+    await page.evaluate((mode) => !!document.querySelector("canvas")!.getContext(mode), renderer),
+    true,
+  );
+  const unusedRenderer = renderer === "webgl2" ? "processor-webgpu" : "processor-webgl";
+  assert.equal(
+    requestedScripts.some((url) => url.includes(unusedRenderer)),
+    false,
+    "Do not download the unused renderer",
+  );
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.locator("#download").click(),
@@ -61,6 +81,7 @@ try {
   const result = {
     baseUrl,
     browser: "Helium",
+    renderer,
     upload: true,
     export: download.suggestedFilename(),
     themes: true,

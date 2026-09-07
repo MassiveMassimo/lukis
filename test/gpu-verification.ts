@@ -8,6 +8,8 @@ import { chromium } from "@playwright/test";
 import { dev } from "astro";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const renderer = process.env.LUKIS_TEST_RENDERER ?? "webgpu";
+const webgl = renderer.startsWith("webgl2");
 const workspace = await realpath(await mkdtemp(join(tmpdir(), "lukis-gpu-")));
 const directory = join(workspace, "results");
 let server: Awaited<ReturnType<typeof dev>> | undefined;
@@ -39,14 +41,26 @@ try {
     args: ["--disable-features=HeliumNoiseCanvas"],
   });
   const page = await browser.newPage();
-  await page.addInitScript(() => {
+  await page.addInitScript((mode) => {
+    if (mode.startsWith("webgl2")) {
+      Object.defineProperty(navigator, "gpu", { value: undefined, configurable: true });
+      if (mode === "webgl2-rgba8") {
+        const getExtension = WebGL2RenderingContext.prototype.getExtension;
+        WebGL2RenderingContext.prototype.getExtension = function (name) {
+          return name === "EXT_color_buffer_float"
+            ? null
+            : Reflect.apply(getExtension, this, [name]);
+        };
+      }
+      return;
+    }
     const request = GPUAdapter.prototype.requestDevice;
     GPUAdapter.prototype.requestDevice = async function (options) {
       const device = await request.call(this, options);
       Object.defineProperty(window, "testDevice", { value: device, configurable: true });
       return device;
     };
-  });
+  }, renderer);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address.port}/gpu`);
@@ -77,6 +91,14 @@ try {
     buffer: Buffer.from(input.split(",")[1], "base64"),
   });
   await page.getByRole("status").filter({ hasText: "Ready: 1" }).waitFor();
+  assert.equal(
+    await page.evaluate((mode) => {
+      const canvas = document.querySelector("canvas")!;
+      return !!canvas.getContext(mode.startsWith("webgl2") ? "webgl2" : "webgpu");
+    }, renderer),
+    true,
+    "The requested renderer must actually process the image",
+  );
   const uploadMs = performance.now() - start;
   const exportStart = performance.now();
   const [download] = await Promise.all([
@@ -202,7 +224,12 @@ try {
     beforeInvalid,
     ...strengths.map((item) => item.comparison),
   ]) {
-    assert.ok(sample.meanAbsoluteError < 0.1, "Average RGB error must remain below 0.1 of 255");
+    // RGBA8 cache quantizes the filtered color before blending, by at most 1/255.
+    const tolerance = renderer === "webgl2-rgba8" ? 0.3 : 0.1;
+    assert.ok(
+      sample.meanAbsoluteError < tolerance,
+      `Average RGB error ${sample.meanAbsoluteError} must remain below ${tolerance} of 255`,
+    );
     assert.ok(
       sample.fractionOver2 < 0.0001,
       "Large rounding differences must remain below 0.01% of channels",
@@ -212,15 +239,26 @@ try {
     { width: 800, height: 600 },
     { width: 800, height: 600 },
   ]);
-  await page.evaluate(() => {
+  const fatalMessage = webgl
+    ? "The graphics device was lost. Reload Lukis to continue."
+    : "Injected GPU memory failure";
+  await page.evaluate((useWebGl) => {
+    if (useWebGl) {
+      document
+        .querySelector("canvas")!
+        .getContext("webgl2")!
+        .getExtension("WEBGL_lose_context")!
+        .loseContext();
+      return;
+    }
     const device = (window as typeof window & { testDevice: GPUDevice }).testDevice;
     device.dispatchEvent(
       new GPUUncapturedErrorEvent("uncapturederror", {
         error: new GPUOutOfMemoryError("Injected GPU memory failure"),
       }),
     );
-  });
-  await page.getByRole("status").filter({ hasText: "Injected GPU memory failure" }).waitFor();
+  }, webgl);
+  await page.getByRole("status").filter({ hasText: fatalMessage }).waitFor();
   let unexpectedDownload = false;
   page.once("download", () => {
     unexpectedDownload = true;
@@ -228,11 +266,12 @@ try {
   await page.getByRole("button", { name: "Download PNG" }).click();
   await page
     .getByRole("status")
-    .filter({ hasText: "Error: Injected GPU memory failure" })
+    .filter({ hasText: `Error: ${fatalMessage}` })
     .waitFor();
   assert.equal(unexpectedDownload, false);
   assert.deepEqual(errors, []);
   const result = {
+    renderer,
     uploadMs,
     exportMs,
     comparison,

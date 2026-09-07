@@ -19,8 +19,9 @@ pnpm check
 pnpm test:browser
 ```
 
-WebGPU must be available. There is no WebGL fallback. Input files are limited to
-25 MB. Output is capped at 1600 pixels on the longest edge.
+Lukis uses WebGPU when available and automatically loads a WebGL2 renderer if
+WebGPU startup fails. Both process images locally with the same controls.
+Input files are limited to 25 MB. Output is capped at 1600 pixels on the longest edge.
 
 The development build includes vanilla DialKit for Bounds, Reveal, and Sound.
 Production builds omit the tuning panel. Theme selection supports System,
@@ -35,7 +36,7 @@ succeeds.
 
 The image checks compare decoded PNGs with the tracked reference renderer and exercise
 orientation, image proportions, replacement, slider input, reduced motion,
-theme changes, and unavailable WebGPU.
+theme changes, automatic WebGL2 fallback, and unavailable graphics APIs.
 
 The production migration uses 73% less JavaScript and 75% fewer loaded font
 bytes in the local comparison. Interaction times were similar. See the
