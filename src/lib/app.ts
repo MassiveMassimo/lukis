@@ -144,9 +144,14 @@ export function mountApp() {
     frame.style.height = `${height}px`;
     controlsSpace.style.height = `${Math.max(0, model.extra)}px`;
     controls.style.width = `${width}px`;
-    messageChrome.style.width = outgoingBounds.style.width = `${width - model.inset * 2}px`;
-    messageChrome.style.height = outgoingBounds.style.height = `${height - model.inset * 2}px`;
-    messageChrome.style.top = outgoingBounds.style.top = `${8 + model.inset}px`;
+    // Hover expands the hit area, not the centered copy. Resizing both makes
+    // grid/translate rounding move the icon between fractional pixel positions.
+    messageChrome.style.width = `${width}px`;
+    messageChrome.style.height = `${height}px`;
+    messageChrome.style.top = "8px";
+    outgoingBounds.style.width = `${width - model.inset * 2}px`;
+    outgoingBounds.style.height = `${height - model.inset * 2}px`;
+    outgoingBounds.style.top = `${8 + model.inset}px`;
     const left = (viewport.width - width) / 2 + model.inset;
     const top =
       Math.max(viewport.padding, (viewport.height - height - 16 - model.extra) / 2) +

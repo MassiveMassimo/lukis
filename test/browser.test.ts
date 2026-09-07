@@ -2801,6 +2801,77 @@ test("WebGL2 allocation failure preserves the previous image and export", async 
   }
 });
 
+test("keeps the upload icon still while the empty dropzone expands and contracts", async () => {
+  const page = await getBrowser().newPage({
+    viewport: { width: 1280, height: 960 },
+    reducedMotion: "no-preference",
+  });
+  try {
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => document.documentElement.dataset.processorState === "ready");
+    const restingBounds = await page.locator(".dropzone").boundingBox();
+    assert.ok(restingBounds);
+    await page.evaluate(() => {
+      const samples: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        boundsWidth: number;
+      }[] = [];
+      (window as typeof window & { hoverIconSamples: typeof samples }).hoverIconSamples = samples;
+      const start = performance.now();
+      function sample() {
+        const icon = document
+          .querySelector('[data-message-icon="upload"] svg')!
+          .getBoundingClientRect();
+        samples.push({
+          x: icon.x,
+          y: icon.y,
+          width: icon.width,
+          height: icon.height,
+          boundsWidth: document.querySelector(".dropzone")!.getBoundingClientRect().width,
+        });
+        if (performance.now() - start < 1600) requestAnimationFrame(sample);
+      }
+      requestAnimationFrame(sample);
+    });
+    await page.locator(".dropzone").hover();
+    await page.waitForTimeout(700);
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(950);
+    const returnedBounds = await page.locator(".dropzone").boundingBox();
+    assert.ok(returnedBounds);
+    assert.ok(
+      Math.abs(returnedBounds.width - restingBounds.width) < 0.001,
+      "Mouse leave must restore the resting dropzone width",
+    );
+    const samples = await page.evaluate(
+      () =>
+        (
+          window as typeof window & {
+            hoverIconSamples: {
+              x: number;
+              y: number;
+              width: number;
+              height: number;
+              boundsWidth: number;
+            }[];
+          }
+        ).hoverIconSamples,
+    );
+    assert.ok(samples.length > 20, "Capture intermediate expansion and contraction frames");
+    const spread = (key: keyof (typeof samples)[number]) =>
+      Math.max(...samples.map((s) => s[key])) - Math.min(...samples.map((s) => s[key]));
+    assert.ok(spread("boundsWidth") > 15, "The dropzone must still expand");
+    for (const key of ["x", "y", "width", "height"] as const) {
+      assert.ok(spread(key) < 0.001, `Upload icon ${key} drifted by ${spread(key)}px`);
+    }
+  } finally {
+    await page.close();
+  }
+});
+
 test("disables upload only when both graphics APIs are unavailable", async () => {
   const context = await getBrowser().newContext();
   await context.addInitScript(() => {
