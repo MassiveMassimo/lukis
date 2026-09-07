@@ -25,6 +25,9 @@ the tracked natural image. It checks transparent input, filter reuse, failed
 replacement rollback, and device-error handling. It runs WebGPU, WebGL2 with
 floating-point targets, and WebGL2 with the float extension disabled. It verifies
 the selected canvas context, so an unintended fallback cannot pass as WebGPU.
+Pixel comparisons read PNG exports directly from the isolated fixture. Each
+renderer also performs a real browser download and checks that its pixels match
+the exported PNG. Repeated pixel comparisons do not trigger browser downloads.
 It needs no separate reference
 checkout or existing server. Temporary images, the server, and the browser are
 removed on completion or failure.

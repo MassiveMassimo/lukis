@@ -1,6 +1,6 @@
 /* oxlint-disable no-await-in-loop -- GPU state and paired exports must be tested in order. */
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, realpath, mkdir, rm, symlink } from "node:fs/promises";
+import { cp, mkdtemp, readFile, realpath, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -107,11 +107,6 @@ try {
   ]);
   await download.saveAs(`${directory}/output.png`);
   const exportMs = performance.now() - exportStart;
-  const [referenceDownload] = await Promise.all([
-    page.waitForEvent("download"),
-    page.getByRole("button", { name: "Download reference" }).click(),
-  ]);
-  await referenceDownload.saveAs(`${directory}/reference.png`);
   async function comparePaths(paths: string[]) {
     const images = await Promise.all(
       paths.map(async (path) => (await readFile(path)).toString("base64")),
@@ -153,20 +148,34 @@ try {
       };
     }, images);
   }
-  const comparison = await comparePaths([`${directory}/reference.png`, `${directory}/output.png`]);
   async function savePair(name: string) {
-    for (const [label, suffix] of [
-      ["Download PNG", "gpu"],
-      ["Download reference", "gl"],
-    ]) {
-      const [file] = await Promise.all([
-        page.waitForEvent("download"),
-        page.getByRole("button", { name: label, exact: true }).click(),
-      ]);
-      await file.saveAs(`${directory}/${name}-${suffix}.png`);
-    }
+    const images = await page.evaluate(() =>
+      (
+        window as typeof window & {
+          exportTestPngs(): Promise<{ output: string; reference: string }>;
+        }
+      ).exportTestPngs(),
+    );
+    await Promise.all([
+      writeFile(`${directory}/${name}-gpu.png`, Buffer.from(images.output.split(",")[1], "base64")),
+      writeFile(
+        `${directory}/${name}-gl.png`,
+        Buffer.from(images.reference.split(",")[1], "base64"),
+      ),
+    ]);
     return comparePaths([`${directory}/${name}-gl.png`, `${directory}/${name}-gpu.png`]);
   }
+  const comparison = await savePair("initial");
+  const downloaded = await comparePaths([
+    `${directory}/initial-gpu.png`,
+    `${directory}/output.png`,
+  ]);
+  assert.deepEqual(
+    downloaded.dimensions,
+    comparison.dimensions,
+    "The real download must preserve export dimensions",
+  );
+  assert.equal(downloaded.max, 0, "The real download must match the PNG export");
   const strengths = [];
   for (const value of [0, 1]) {
     await page.getByLabel("Paint").fill(String(value));

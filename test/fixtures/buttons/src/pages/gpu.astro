@@ -13,7 +13,21 @@ import "../styles.css";
   const canvas = document.querySelector("canvas")!;
   const status = document.querySelector('[role="status"]')!;
   const processor = await createImageProcessor(canvas, (error) => { status.textContent = error.message; });
-  const reference = createPainterlyProcessor(document.querySelector<HTMLCanvasElement>("#reference")!);
+  const referenceCanvas = document.querySelector<HTMLCanvasElement>("#reference")!;
+  const reference = createPainterlyProcessor(referenceCanvas);
+  // Pixel comparisons use PNG bytes, without triggering browser download limits.
+  Object.assign(window, {
+    async exportTestPngs() {
+      const blob = await processor.exportPng();
+      const output = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+      return { output, reference: referenceCanvas.toDataURL("image/png") };
+    },
+  });
   const strength = document.querySelector<HTMLInputElement>("#strength")!;
   const brush = document.querySelector<HTMLInputElement>("#brush")!;
   for (const input of [strength, brush]) input.addEventListener("change", async () => {
