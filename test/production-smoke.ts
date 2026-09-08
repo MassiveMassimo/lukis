@@ -36,6 +36,23 @@ try {
   await expect(page).toHaveTitle("Lukis — Turn images into paintings");
   await expect(page.locator("html")).toHaveAttribute("data-processor-state", "ready");
   assert.equal(await page.locator(".dialkit-root").count(), 0);
+  const zone = page.locator(".dropzone");
+  for (const fraction of [0.25, 0.75]) {
+    const bounds = (await zone.boundingBox())!;
+    const point = {
+      x: bounds.x + bounds.width * fraction,
+      y: bounds.y + bounds.height * 0.4,
+    };
+    await page.mouse.move(point.x, point.y);
+    await expect(page.locator(".drop-light")).toHaveCSS("opacity", "0.38");
+    const light = (await page.locator(".drop-light").boundingBox())!;
+    assert.ok(
+      Math.abs(light.x + light.width / 2 - point.x) < 10 &&
+        Math.abs(light.y + light.height / 2 - point.y) < 10,
+      `Built light must stay centered on the cursor: ${JSON.stringify({ point, light })}`,
+    );
+  }
+  await page.mouse.move(0, 0);
   await page.screenshot({ path: join(directory, "desktop-light.png") });
   await page.locator("#theme").click();
   await page.locator("#theme").click();

@@ -20,7 +20,9 @@ import Alert from "@tabler/icons/outline/alert-circle.svg";
         </span>
       </span>
       <span class="drop-light-position pointer-events-none absolute inset-0" aria-hidden="true">
-        <span class="drop-light absolute block"></span>
+        <span class="drop-light-center absolute block">
+          <span class="drop-light absolute inset-0 block"></span>
+        </span>
       </span>
     </button>
   </div>
@@ -48,12 +50,15 @@ import Alert from "@tabler/icons/outline/alert-circle.svg";
   }
   .preview-stage { --empty-width: min(calc(100vw - var(--page-padding) * 2), 56rem); }
   .drop-light-position { transform: translate(50%, 50%); }
-  .drop-light {
+  /* Keep centering separate from the scale transform owned by Anime.js. */
+  .drop-light-center {
     width: clamp(320px, 65vw, 720px);
     aspect-ratio: 1.25;
+    transform: translate(-50%, -50%);
+  }
+  .drop-light {
     background: radial-gradient(ellipse, rgb(15 23 35 / 0.16), rgb(15 23 35 / 0.07) 32%, transparent 70%);
     opacity: 0;
-    translate: -50% -50%;
     transform: scale(0.9);
   }
   :global(html.dark) .drop-light {

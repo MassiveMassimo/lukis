@@ -141,8 +141,9 @@ coverage. They do not establish compatibility with every browser or GPU driver.
 
 ## Production smoke check
 
-`node test/production-smoke.ts <url> <output-directory>` exercises upload, PNG
-download, themes, mobile layout, and restart, and reports browser errors.
+`node test/production-smoke.ts <url> <output-directory>` checks the visible
+shadow/spotlight center against the cursor in the production build, then exercises
+upload, PNG download, themes, mobile layout, and restart, and reports browser errors.
 Local tests do not establish that a deployed site works. Run this check against
 the target URL.
 
