@@ -19,6 +19,75 @@ both graphics APIs unavailable. Motion checks verify message exit overlap,
 rapid reversal, intermediate monochrome frames, and stable preview alignment.
 Spring-curve tests cover visual duration and physical settling separately.
 
+The optical default comes from the approved center-wave prototype inspired by
+the [NameDrop reference](https://www.youtube.com/watch?v=xU3HryTsuVw). Its 1.6 s
+center reveal uses cubic-out easing and a wide radial gradient (Feather 0.25,
+a 0.5-short-side transition). Reveal can finish after the bounds resize; shorter
+reveals still align with the end of that resize. Normal motion uses shader alpha
+and localized shader blur, without a second whole-image opacity or CSS blur ramp.
+Reduced motion retains the short opacity fade.
+
+The approved B impact wave now drives both renderers. One clock moves a compact
+Gaussian fold and its lower trailing shoulder outward. It launches over 226.7 ms,
+broadens with travel distance, and loses amplitude through spatial damping.
+There is no separate travel easing, spring handoff, center residual, or fade.
+The wave has a smooth C2 boundary and reaches exact rest before the flat sample.
+Normals drive refraction, neutral area-light reflection, chromatic sampling,
+and localized blur. The origin stays at the center.
+
+The default wave lasts 2.8 s, with 1.2 s bounds and a 1.6 s mask reveal.
+The approved tuning uses Strength 2, Height 0.635, Width 0.33, Broadening 0.036,
+and Refraction 0.5. Wider images, wider folds, and extra echoes increase the required travel
+distance within the selected duration. This keeps valid narrow images from locking
+the app for minutes. The endpoint includes the broad trailing shoulder, last echo,
+and finite-difference normal samples. Reveal duration does not stretch the wave;
+a longer reveal continues after the wave reaches rest.
+
+Both renderers reuse the cached painting. Displacement, dispersion, and blur taper
+across a broad boundary region to prevent stretched edge texels. Presentation uses
+premultiplied alpha. Exports remain opaque and unchanged. Reduced motion skips the
+wave. GPU checks cover immediate mask growth, visible early deformation, motion
+after the mask completes, exact final pixels, filter-pass counts, and PNG exports.
+Validate WGSL with `pnpm exec vgpu check src/shaders/present.wgsl --require-validation`.
+
+In development, open Ripple in DialKit 2.0's vanilla panel. Appearance controls
+include Strength, Height, Width, Broadening, Refraction, Dispersion, Color Boost,
+Sheen, Shading, Feather, Blur Px, Count, Spacing, and Echo.
+Dispersion controls the RGB sampling distance. Color Boost controls its visible
+contribution. Defaults are Dispersion 0.42, Color Boost 5.4, and Blur Px 14.
+The color comes from shifted image samples, with no colored edge glow.
+Blur uses nine weighted samples and grows with local deformation.
+Count supports one to six waves. Overlapping broad waves can merge; Count does
+not guarantee separately visible crests. Echo zero leaves only the first wave.
+Width and Spacing use short-side units. Broadening is width growth per travel unit.
+Its range stays below the rate at which the trailing shoulder would stop exiting.
+
+Timing exposes Duration Ms, Start Offset Ms, Attack Ms, and Damping.
+Duration controls the wave's total travel time. Attack controls its initial onset.
+Higher Damping weakens the wave sooner as it moves outward. Negative offsets
+pre-advance the wave at mask entry. The mask retains the Reveal transition's
+own duration and easing. Old Custom, Travel, and Settle controls are removed.
+
+Replay reveal uses the cached image. Each replay captures its settings so edits
+cannot invalidate its end bound mid-flight. Edits apply on the next replay and
+update immediately in paused previews. Preview > Use Timeline scrubs the same
+sampler and reveal easing as playback. With it off, Reveal Progress and Wave
+Progress remain independent. Loop repeats with a configurable gap and stops
+scheduling when disabled, paused, or under reduced motion.
+
+Load impact default restores the approved ripple and 1.6 s Reveal settings.
+Use this action to replace older persisted tuning. Reset ripple restores only
+Ripple and leaves Bounds, Reveal, and Sound intact. Edits and saved versions
+continue to persist through DialKit. Removed paths are discarded by its existing
+reconciliation. No storage migration is needed.
+
+Browser tests cover persistence, paused tuning, replay, reset, loop stopping,
+reduced motion, and unchanged exports in both renderers. Unit tests cover the
+approved initial trajectory, duration, offsets, deterministic reverse scrubbing,
+and smooth completion across extreme supported proportions and control ranges.
+The long bounds-overlap check measures the revealed marker after the wave passes.
+Partially masked pixels are covered by GPU mask checks. DialKit stays development-only.
+
 `pnpm test:gpu` compares decoded PNG pixels against the tracked renderer in
 `test/fixtures/painterly-reference.ts`. It generates synthetic input and uses
 the tracked natural image. It checks transparent input, filter reuse, failed

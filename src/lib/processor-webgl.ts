@@ -1,8 +1,11 @@
 import { canvasToPngBlob, prepareImageBitmap } from "./image";
 import type { ImageDimensions } from "./image";
 import type { ImageProcessor } from "./processor";
+import { DEFAULT_RIPPLE } from "./processor";
+import { defaultRippleMotion } from "./ripple-motion";
 import filterShader from "../shaders/painterly.glsl?raw";
 import blendShader from "../shaders/blend.glsl?raw";
+import presentShader from "../shaders/present.glsl?raw";
 
 interface RenderTarget {
   texture: WebGLTexture;
@@ -24,20 +27,14 @@ void main() {
   vUv = vec2(uv.x, uFlipY ? 1.0 - uv.y : uv.y);
   gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
 }`;
-const presentShader = `#version 300 es
-precision highp float;
-in vec2 vUv;
-out vec4 fragColor;
-uniform sampler2D uSource;
-void main() { fragColor = texture(uSource, vUv); }
-`;
 
 export function createWebGlProcessor(
   canvas: HTMLCanvasElement,
   onFatal: (error: Error) => void,
 ): ImageProcessor {
   const context = canvas.getContext("webgl2", {
-    alpha: false,
+    alpha: true,
+    premultipliedAlpha: true,
     antialias: false,
     depth: false,
     stencil: false,
@@ -114,8 +111,8 @@ export function createWebGlProcessor(
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     return result;
   }
-  function target(size: ImageDimensions, float: boolean): RenderTarget {
-    const color = texture();
+  function target(size: ImageDimensions, float: boolean, linear = false): RenderTarget {
+    const color = texture(linear);
     const framebuffer = gl.createFramebuffer();
     try {
       if (!framebuffer) throw new Error("The browser could not allocate an image target.");
@@ -152,7 +149,7 @@ export function createWebGlProcessor(
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
       check();
       painted = target(dimensions, floatTargets);
-      output = target(dimensions, false);
+      output = target(dimensions, false, true);
       return { source, painted, output, dimensions, brush: NaN };
     } catch (error) {
       if (source) gl.deleteTexture(source);
@@ -208,7 +205,13 @@ export function createWebGlProcessor(
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       check();
     }
-    function show(image: ImageResources) {
+    function show(
+      image: ImageResources,
+      progress = 1,
+      wave = 1,
+      settings = DEFAULT_RIPPLE,
+      motion = defaultRippleMotion(wave, settings, image.dimensions),
+    ) {
       const { width, height } = image.dimensions;
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
@@ -216,6 +219,12 @@ export function createWebGlProcessor(
       gl.viewport(0, 0, width, height);
       gl.useProgram(present);
       bind(present, "uSource", image.output.texture, 0);
+      gl.uniform2f(gl.getUniformLocation(present, "uResolution"), width, height);
+      gl.uniform1f(gl.getUniformLocation(present, "uProgress"), progress);
+      for (const [key, value] of Object.entries(settings))
+        gl.uniform1f(gl.getUniformLocation(present, `u_${key}`), value);
+      gl.uniform1f(gl.getUniformLocation(present, "u_distance"), motion.distance);
+      gl.uniform1f(gl.getUniformLocation(present, "u_amplitude"), motion.amplitude);
       // ImageBitmap's first row stays first in the offscreen targets and readback.
       // Only presentation flips it into WebGL's bottom-left canvas coordinates.
       gl.uniform1i(gl.getUniformLocation(present, "uFlipY"), 1);
@@ -282,6 +291,11 @@ export function createWebGlProcessor(
             draw(current, strength, brush);
             show(current);
           }
+        });
+      },
+      present(progress, wave = 1, settings = DEFAULT_RIPPLE, motion) {
+        return enqueue(() => {
+          if (current) show(current, progress, wave, settings, motion);
         });
       },
       snapshot(output) {

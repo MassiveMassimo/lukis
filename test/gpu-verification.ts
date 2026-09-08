@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { dev } from "astro";
+import { DEFAULT_RIPPLE, type RippleSettings, type RippleMotion } from "../src/lib/processor.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const renderer = process.env.LUKIS_TEST_RENDERER ?? "webgpu";
@@ -176,6 +177,165 @@ try {
     "The real download must preserve export dimensions",
   );
   assert.equal(downloaded.max, 0, "The real download must match the PNG export");
+  const rippleFrames = [];
+  const transparentBackdrop = await page.addStyleTag({
+    content: "html, body, canvas { background: transparent !important; }",
+  });
+  const presentationCases: Array<[number, number, RippleSettings?, RippleMotion?]> = [
+    [1, 1],
+    [0, 0],
+    [0.02, 0.08],
+    [0.3, 0.1],
+    [0.5, 0.15],
+    [1, 0.65],
+    [1, 0.85],
+    [1, 1],
+    [1, 0.35, { ...DEFAULT_RIPPLE, height: 0 }],
+    [1, 0.35, { ...DEFAULT_RIPPLE, strength: 0 }],
+    [1, 0.35, { ...DEFAULT_RIPPLE, width: 0.3 }],
+    [1, 0.35, { ...DEFAULT_RIPPLE, width: 0.3, count: 3, spacing: 0.25 }],
+    [1, 0.35, { ...DEFAULT_RIPPLE, width: 0.3, count: 3, echo: 0 }],
+    [1, 1, DEFAULT_RIPPLE, { distance: 0.7, amplitude: 0.5 }],
+    [1, 1, DEFAULT_RIPPLE, { distance: 0.7, amplitude: 0 }],
+    [1, 0.35, { ...DEFAULT_RIPPLE, width: 0.3, blurPx: 16 }],
+    [1, 0.35, { ...DEFAULT_RIPPLE, strength: 0, blurPx: 16 }],
+    [1, 1, DEFAULT_RIPPLE, { distance: 0.7, amplitude: -0.5 }],
+  ];
+  for (const [progress, wave, settings, motion] of presentationCases) {
+    const passes = await page.evaluate(
+      async (value) => {
+        const fixture = window as typeof window & {
+          presentTestFrame(
+            progress: number,
+            wave: number,
+            settings?: RippleSettings,
+            motion?: RippleMotion,
+          ): Promise<number>;
+          exportTestPngs(): Promise<{ output: string }>;
+        };
+        const before = (await fixture.exportTestPngs()).output;
+        const count = await fixture.presentTestFrame(
+          value.progress,
+          value.wave,
+          value.settings,
+          value.motion,
+        );
+        if ((await fixture.exportTestPngs()).output !== before)
+          throw new Error("Ripple changed the PNG export");
+        return count;
+      },
+      { progress, wave, settings, motion },
+    );
+    // Capture the composited canvas; GPU canvas backing stores are transient.
+    const image = await page.locator("canvas").first().screenshot({ omitBackground: true });
+    rippleFrames.push({ image: image.toString("base64"), passes, progress, wave });
+  }
+  await transparentBackdrop.evaluate((element) => element.parentNode?.removeChild(element));
+  const ripple = await page.evaluate(async (encodedFrames) => {
+    const frames: Array<(typeof encodedFrames)[number] & { pixels: Uint8ClampedArray }> = [];
+    for (const frame of encodedFrames) {
+      const image = new Image();
+      image.src = `data:image/png;base64,${frame.image}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d")!;
+      context.drawImage(image, 0, 0);
+      frames.push({
+        ...frame,
+        pixels: context.getImageData(0, 0, canvas.width, canvas.height).data,
+      });
+    }
+    const first = frames[0].pixels;
+    return frames.map(({ pixels, passes, progress }, index) => {
+      let changed = 0;
+      let visible = 0;
+      let opaque = 0;
+      let featherPixels = 0;
+      let visibleWarped = 0;
+      let trailingWarped = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        const x = (i / 4) % 800;
+        const y = Math.floor(i / 4 / 800);
+        const delta = Math.max(
+          ...[0, 1, 2].map((channel) => Math.abs(pixels[i + channel] - first[i + channel])),
+        );
+        if (delta > 2) changed++;
+        const alpha = pixels[i + 3];
+        if (alpha > 0) visible++;
+        if (alpha === 255) opaque++;
+        // PNG RGB is unpremultiplied; alpha alone must not satisfy this check.
+        if (alpha >= 128 && delta > 8) visibleWarped++;
+        if (alpha === 255 && delta > 3) trailingWarped++;
+        if (y === 300 && alpha > 16 && alpha < 239) featherPixels++;
+        if (index > 1 && alpha < frames[index - 1].pixels[i + 3])
+          throw new Error("The reveal mask must only expand");
+        // Each horizontal and vertical ray has one edge, with no trailing holes.
+        if (index > 1 && (y === 300 || x === 400)) {
+          const inner = y === 300 ? i + (x < 400 ? 4 : -4) : i + (y < 300 ? 3200 : -3200);
+          if (inner >= 0 && inner < pixels.length && alpha > pixels[inner + 3])
+            throw new Error("The mask must reveal one continuous circle");
+        }
+      }
+      return {
+        index,
+        changed,
+        progress,
+        visible,
+        opaque,
+        featherPixels,
+        visibleWarped,
+        trailingWarped,
+        passes,
+        exact: pixels.every((value, i) => value === first[i]),
+      };
+    });
+  }, rippleFrames);
+  for (const frame of ripple) {
+    assert.equal(frame.passes, 1, "Ripple must reuse the cached painting");
+  }
+  assert.equal(ripple[1].visible, 0, "The first frame must be fully masked");
+  assert.ok(ripple[2].visible > 0, "The wave must reveal pixels immediately after starting");
+  assert.ok(
+    ripple[3].visible > ripple[2].visible && ripple[4].visible > ripple[3].visible,
+    "One reveal front must expand across the image",
+  );
+  for (const frame of ripple.slice(5))
+    assert.equal(frame.opaque, 800 * 600, "The settling wave must keep the image opaque");
+  assert.ok(ripple[4].featherPixels > 200, "The reveal must have a broad gradient edge");
+  assert.ok(ripple[3].visibleWarped > 1000, "The bend must be visible early in the reveal");
+  assert.ok(ripple[4].visibleWarped > 1000, "The broad wave must visibly bend and light the image");
+  assert.ok(ripple[5].trailingWarped > 1000, "The wave must continue after the mask completes");
+  assert.ok(ripple[6].changed < ripple[5].changed, "The remaining deformation must recede");
+  assert.ok(ripple[7].exact, "The ripple must settle to the exact original display pixels");
+  assert.ok(
+    ripple[8].exact,
+    "Live height zero must remove the bend without changing filter passes or export",
+  );
+  console.log({ renderer, ripple });
+  assert.ok(ripple[9].exact, "Overall strength zero disables distortion and lighting");
+  assert.ok(ripple[11].changed > ripple[10].changed, "Multiple waves affect more of the image");
+  assert.equal(
+    rippleFrames[12].image,
+    rippleFrames[10].image,
+    "Echo zero leaves only the first wave",
+  );
+  assert.ok(
+    ripple[13].changed > 1000,
+    "Custom motion can keep a bend after the legacy clock completes",
+  );
+  assert.ok(ripple[14].exact, "Custom motion completion restores exact flat pixels");
+  assert.notEqual(
+    rippleFrames[15].image,
+    rippleFrames[10].image,
+    "Localized blur changes the wave",
+  );
+  assert.ok(ripple[16].exact, "Strength zero also removes localized blur");
+  assert.ok(
+    ripple[17].changed > 1000,
+    "Explicit signed deformation must survive the flat fast path",
+  );
   const strengths = [];
   for (const value of [0, 1]) {
     await page.getByLabel("Paint").fill(String(value));

@@ -2,6 +2,8 @@ import { animate, cubicBezier } from "animejs";
 import { play, setEnabled, setVolume } from "cuelume";
 import type { TransitionConfig } from "dialkit/vanilla";
 import type { ImageProcessor } from "./processor";
+import { DEFAULT_RIPPLE } from "./processor";
+import { createRipplePlayback, DEFAULT_RIPPLE_TIMING, type RippleTiming } from "./ripple-motion";
 import type { ImageDimensions } from "./image";
 import { createButtonFeedback } from "./button";
 import { createIconSwap } from "./icon-swap";
@@ -78,6 +80,19 @@ export function mountApp() {
   let errorTimer: ReturnType<typeof setTimeout> | undefined;
   let boundsConfig: TransitionConfig = BOUNDS_TRANSITION,
     revealConfig: TransitionConfig = REVEAL_TRANSITION;
+  let rippleSettings = { ...DEFAULT_RIPPLE };
+  let rippleTiming: RippleTiming = { ...DEFAULT_RIPPLE_TIMING };
+  let rippleLoop = { enabled: false, gapMs: 500 };
+  let rippleReplayTimer: ReturnType<typeof setTimeout> | undefined;
+  let ripplePreview = {
+    paused: false,
+    useTimeline: false,
+    timelineProgress: 0.35,
+    revealProgress: 1,
+    waveProgress: 0.35,
+  };
+  let ripplePreviewPending = false;
+  let ripplePreviewTask: Promise<void> | undefined;
   let boundsAnimation: ReturnType<typeof animate> | undefined,
     hoverAnimation: ReturnType<typeof animate> | undefined;
   let referenceAnimation: ReturnType<typeof animate> | undefined,
@@ -359,13 +374,59 @@ export function mountApp() {
       ? { duration: 120, delay: 0 }
       : getRevealTiming(bounds.duration, reveal.duration);
     const ease = reducedMotion() ? FADE_EASE : reveal.ease;
-    clip.setAttribute("aria-hidden", "false");
-    motion(surface, {
-      filter: [reducedMotion() ? "blur(0px)" : "blur(4px)", "blur(0px)"],
+    const maskedReveal = !reducedMotion() && duration > 0;
+    const playbackSettings = { ...rippleSettings };
+    const playback = createRipplePlayback(
       duration,
-      delay,
-      ease,
-    });
+      playbackSettings,
+      rippleTiming,
+      dimensions ?? undefined,
+    );
+    const ripple = { progress: 0, elapsed: 0 };
+    clip.dataset.revealProgress = maskedReveal ? "0" : "1";
+    if (maskedReveal) await processor!.present(0, 0, rippleSettings);
+    if (disposed) return;
+    const maskAnimation = maskedReveal
+      ? motion(ripple, {
+          progress: 1,
+          duration,
+          delay,
+          ease,
+          onUpdate: () => {
+            clip.dataset.revealProgress = String(ripple.progress);
+          },
+        })
+      : undefined;
+    let rippleTask: Promise<void> | undefined;
+    let rippleError: unknown;
+    const rippleAnimation = maskedReveal
+      ? motion(ripple, {
+          elapsed: playback.duration,
+          duration: playback.duration,
+          delay,
+          ease: "linear",
+          onUpdate: () => {
+            // Keep at most one GPU frame pending; slow devices skip ahead.
+            if (rippleTask || rippleError || disposed) return;
+            const sampled = playback.sample(ripple.elapsed);
+            rippleTask = processor!
+              .present(
+                reducedMotion() ? 1 : ripple.progress,
+                reducedMotion() ? 1 : sampled.wave,
+                playbackSettings,
+                reducedMotion() ? undefined : sampled,
+              )
+              .catch((cause) => {
+                rippleError = cause;
+              })
+              .finally(() => {
+                rippleTask = undefined;
+              });
+          },
+        })
+      : undefined;
+    clip.setAttribute("aria-hidden", "false");
+    surface.style.filter = "blur(0px)";
     motion(outgoingImage, {
       opacity: 0,
       filter: reducedMotion() ? "blur(0px)" : "blur(4px)",
@@ -384,12 +445,87 @@ export function mountApp() {
           ease: HOVER_EASE,
         }),
       );
-    await motion(clip, { opacity: [0, 1], duration, delay, ease });
+    await motion(clip, { opacity: maskedReveal ? [1, 1] : [0, 1], duration, delay, ease });
     if (disposed) return;
     revealed = hasRevealedImage = true;
+    updateMessage();
+    await maskAnimation;
+    await rippleAnimation;
+    await rippleTask;
+    if (disposed) return;
+    if (rippleError) throw rippleError;
+    if (rippleAnimation) await processor!.present(1);
     busy = false;
     syncBusy();
     updateHover();
+    refreshRipplePreview();
+    queueRippleReplay();
+  }
+  function replayRipple() {
+    if (busy || disposed || !file || !processor || fatal) return;
+    busy = true;
+    syncBusy();
+    void revealImage().catch((cause) => {
+      if (disposed) return;
+      busy = false;
+      showError(cause instanceof Error ? cause.message : "The reveal could not replay.", true);
+    });
+  }
+  function queueRippleReplay() {
+    clearTimeout(rippleReplayTimer);
+    if (
+      !rippleLoop.enabled ||
+      ripplePreview.paused ||
+      reducedMotion() ||
+      busy ||
+      !file ||
+      disposed ||
+      fatal
+    )
+      return;
+    rippleReplayTimer = setTimeout(replayRipple, rippleLoop.gapMs);
+  }
+  function refreshRipplePreview() {
+    if (!import.meta.env.DEV || busy || disposed || !processor || !file || fatal) return;
+    ripplePreviewPending = true;
+    if (ripplePreviewTask) return;
+    ripplePreviewTask = (async () => {
+      while (ripplePreviewPending && !busy && !disposed) {
+        ripplePreviewPending = false;
+        const paused = ripplePreview.paused && !reducedMotion();
+        const reveal = transition(revealConfig);
+        const { duration } = getRevealTiming(transition(boundsConfig).duration, reveal.duration);
+        const playback = createRipplePlayback(
+          duration,
+          rippleSettings,
+          rippleTiming,
+          dimensions ?? undefined,
+        );
+        const elapsed = ripplePreview.timelineProgress * playback.duration;
+        const timeline = paused && ripplePreview.useTimeline;
+        let progress = 1;
+        if (timeline) progress = reveal.ease(duration > 0 ? Math.min(1, elapsed / duration) : 1);
+        else if (paused) progress = ripplePreview.revealProgress;
+        const sampled = timeline ? playback.sample(elapsed) : undefined;
+        clip.style.opacity = "1";
+        clip.dataset.revealProgress = String(progress);
+        surface.style.filter = "blur(0px)";
+        // Coalesce slider edits without refiltering or queuing stale frames.
+        // oxlint-disable-next-line no-await-in-loop
+        await processor!.present(
+          progress,
+          sampled?.wave ?? (paused ? ripplePreview.waveProgress : 1),
+          rippleSettings,
+          sampled,
+        );
+      }
+    })()
+      .catch((cause) =>
+        showError(cause instanceof Error ? cause.message : "The ripple preview failed.", true),
+      )
+      .finally(() => {
+        ripplePreviewTask = undefined;
+      });
   }
   async function acceptFile(nextFile: File | undefined) {
     if (busy || disposed) return;
@@ -472,6 +608,8 @@ export function mountApp() {
         // oxlint-disable-next-line no-await-in-loop
         await processor!.render(paintSlider.value / 100, brushSlider.value);
       }
+      refreshRipplePreview();
+      queueRippleReplay();
     })()
       .catch((cause) =>
         showError(cause instanceof Error ? cause.message : "The image could not be updated.", true),
@@ -608,6 +746,8 @@ export function mountApp() {
       if (!disposed) {
         busy = false;
         syncBusy();
+        refreshRipplePreview();
+        queueRippleReplay();
       }
     }
   }
@@ -713,6 +853,8 @@ export function mountApp() {
     () => {
       if (reduce.matches) for (const animation of animations) animation.complete();
       writeGeometry();
+      refreshRipplePreview();
+      queueRippleReplay();
     },
     { signal },
   );
@@ -751,19 +893,90 @@ export function mountApp() {
           {
             bounds: { _collapsed: true, transition: BOUNDS_TRANSITION },
             reveal: { _collapsed: true, transition: REVEAL_TRANSITION },
+            ripple: {
+              _collapsed: true,
+              replay: { type: "action", label: "Replay reveal" },
+              preset: { type: "action", label: "Load impact default" },
+              appearance: {
+                strength: [DEFAULT_RIPPLE.strength, 0, 3, 0.05],
+                height: [DEFAULT_RIPPLE.height, 0, 0.8, 0.005],
+                width: [DEFAULT_RIPPLE.width, 0.05, 2, 0.005],
+                broadening: [DEFAULT_RIPPLE.broadening, 0, 0.12, 0.001],
+                refraction: [DEFAULT_RIPPLE.refraction, 0, 0.6, 0.01],
+                dispersion: [DEFAULT_RIPPLE.dispersion, 0, 0.6, 0.005],
+                colorBoost: [DEFAULT_RIPPLE.colorBoost, 0, 10, 0.1],
+                sheen: [DEFAULT_RIPPLE.sheen, 0, 2, 0.01],
+                shading: [DEFAULT_RIPPLE.shading, 0, 2, 0.01],
+                feather: [DEFAULT_RIPPLE.feather, 0.05, 0.8, 0.01],
+                blurPx: [DEFAULT_RIPPLE.blurPx, 0, 16, 0.25],
+                count: [DEFAULT_RIPPLE.count, 1, 6, 1],
+                spacing: [DEFAULT_RIPPLE.spacing, 0.05, 1.2, 0.01],
+                echo: [DEFAULT_RIPPLE.echo, 0, 1, 0.05],
+              },
+              timing: {
+                _collapsed: true,
+                startOffsetMs: [0, -2000, 4000, 25],
+                attackMs: [DEFAULT_RIPPLE_TIMING.attackMs, 0, 2000, 10],
+                durationMs: [DEFAULT_RIPPLE_TIMING.durationMs, 500, 20000, 50],
+                damping: [DEFAULT_RIPPLE_TIMING.damping, 0, 1, 0.01],
+              },
+              loop: { _collapsed: true, enabled: false, gapMs: [500, 100, 2500, 50] },
+              preview: {
+                _collapsed: true,
+                paused: false,
+                useTimeline: false,
+                timelineProgress: [0.35, 0, 1, 0.01],
+                revealProgress: [1, 0, 1, 0.01],
+                waveProgress: [0.35, 0, 1, 0.01],
+              },
+              reset: { type: "action", label: "Reset ripple" },
+            },
             sound: {
               _collapsed: true,
               enabled: true,
               volume: [0.5, 0, 1, 0.05] as [number, number, number, number],
             },
           },
-          { id: "lukis", persist: true },
+          {
+            id: "lukis",
+            persist: true,
+            onAction: (path) => {
+              if (path === "ripple.reset" || path === "ripple.preset") {
+                kit.setValues({
+                  ...(path === "ripple.preset"
+                    ? { reveal: { transition: REVEAL_TRANSITION } }
+                    : {}),
+                  ripple: {
+                    appearance: { ...DEFAULT_RIPPLE },
+                    timing: { ...DEFAULT_RIPPLE_TIMING },
+                    loop: { enabled: false, gapMs: 500 },
+                    preview: {
+                      paused: false,
+                      useTimeline: false,
+                      timelineProgress: 0.35,
+                      revealProgress: 1,
+                      waveProgress: 0.35,
+                    },
+                  },
+                });
+              }
+              if (path !== "ripple.replay" || busy) return;
+              kit.setValue("ripple.preview.paused", false);
+              replayRipple();
+            },
+          },
         );
         kit.subscribe((values) => {
           boundsConfig = values.bounds.transition;
           revealConfig = values.reveal.transition;
+          rippleSettings = values.ripple.appearance;
+          rippleTiming = values.ripple.timing;
+          rippleLoop = values.ripple.loop;
+          ripplePreview = values.ripple.preview;
           setEnabled(values.sound.enabled);
           setVolume(values.sound.volume);
+          refreshRipplePreview();
+          queueRippleReplay();
         });
         dialCleanup = () => {
           kit.destroy();
@@ -778,6 +991,7 @@ export function mountApp() {
     abort.abort();
     runLatest.cancel();
     clearTimeout(errorTimer);
+    clearTimeout(rippleReplayTimer);
     for (const animation of animations) animation.cancel();
     animations.clear();
     iconSwap.destroy();

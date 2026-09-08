@@ -15,9 +15,9 @@ test("reveal duration places its start before the shared bounds ending", () => {
   assert.equal(timing.delay + timing.duration, 0.8);
 });
 
-test("a reveal longer than bounds uses the whole bounds timeline", () => {
-  assert.deepEqual(getRevealTiming(0.3, 2), { delay: 0, duration: 0.3 });
-  assert.deepEqual(getRevealTiming(0, 0.3), { delay: 0, duration: 0 });
+test("a reveal longer than bounds can finish after the resize", () => {
+  assert.deepEqual(getRevealTiming(0.3, 2), { delay: 0, duration: 2 });
+  assert.deepEqual(getRevealTiming(0, 0.3), { delay: 0, duration: 0.3 });
   assert.deepEqual(getRevealTiming(0.8, 0), { delay: 0.8, duration: 0 });
 });
 

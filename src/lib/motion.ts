@@ -8,8 +8,8 @@ export const BOUNDS_TRANSITION = {
 } satisfies EasingConfig;
 export const REVEAL_TRANSITION = {
   type: "easing",
-  duration: 1,
-  ease: [0.35, 0, 0, 1],
+  duration: 1.6,
+  ease: [1 / 3, 1, 2 / 3, 1],
 } satisfies EasingConfig;
 export const HOVER_EASE = cubicBezier(0.175, 0.885, 0.32, 1.1);
 export const MESSAGE_EASE = cubicBezier(0, 0, 0.58, 1);
@@ -22,8 +22,7 @@ export const reducedMotion = () =>
 
 export function getRevealTiming(boundsDuration: number, revealDuration: number, reduce = false) {
   if (reduce) return { delay: 0, duration: 0 };
-  const duration = Math.min(boundsDuration, revealDuration);
-  return { delay: boundsDuration - duration, duration };
+  return { delay: Math.max(0, boundsDuration - revealDuration), duration: revealDuration };
 }
 
 export function getTransitionDuration(config: TransitionConfig) {

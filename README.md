@@ -54,6 +54,17 @@ Wrangler uses the account selected during login. Set `CLOUDFLARE_ACCOUNT_ID` in
 your shell to select another account. The Worker name is set in `wrangler.jsonc`;
 change it before deploying your own copy.
 
+GitHub Actions runs formatting, lint, type checks, unit tests, and a deployment
+dry run for pull requests. Pushes to `main` and manual runs on `main` also deploy
+the checked build to the existing `lukis` Worker. The hardware GPU and Helium
+browser suites still run locally before pushing; see [validation](docs/validation.md).
+
+Set repository Actions secrets `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`.
+Use an account-scoped token with the permissions described in
+[Cloudflare's GitHub Actions guide](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/).
+The local Wrangler OAuth login does not supply credentials to GitHub Actions.
+Deployment fails with a setup message until both secrets are present.
+
 ## Documentation and attribution
 
 See [the architecture](docs/migration.md), [testing and benchmarks](docs/validation.md), and

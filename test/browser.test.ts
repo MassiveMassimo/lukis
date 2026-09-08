@@ -221,16 +221,23 @@ async function captureBoundsRevealFrames(
     });
     document.body.append(beacon);
 
+    let revealStarted: number | undefined;
     function updateBeacon() {
       const frame = document.querySelector(".canvas-frame");
       const reveal = document.querySelector(".canvas-clip");
       if (frame instanceof HTMLElement && reveal instanceof HTMLElement) {
-        const opacity = Number.parseFloat(getComputedStyle(reveal).opacity);
+        const progress = Number(reveal.dataset.revealProgress ?? 0);
+        if (progress > 0 && revealStarted === undefined) revealStarted = performance.now();
+        // The mask can clip the marker while its lit edge crosses it. Measure
+        // the revealed interior late in this eased reveal, while bounds still move.
+        // GPU verification separately checks the mask's circular edge and growth.
         const isOverlap =
+          revealStarted !== undefined &&
+          performance.now() - revealStarted >= 1500 &&
           frame.dataset.hasFile === "true" &&
           frame.dataset.animating === "true" &&
-          opacity > 0.1 &&
-          opacity < 0.999;
+          progress > 0.1 &&
+          progress < 0.999;
         beacon.dataset.animationOverlap = String(isOverlap);
         beacon.style.background = isOverlap ? "#00ff00" : "#000000";
       }
@@ -367,8 +374,8 @@ async function captureRevealCenterSamples(
         frame.dataset.hasFile === "true"
       ) {
         const clipStyle = getComputedStyle(clip);
-        const opacity = Number.parseFloat(clipStyle.opacity);
-        if (opacity > 0.01 && opacity < 0.999) {
+        const progress = Number(clip.dataset.revealProgress ?? 0);
+        if (progress > 0.01 && progress < 0.999) {
           browserWindow.revealCenterSamples.push({
             frameMask: getComputedStyle(frame).maskImage,
             imageMask: getComputedStyle(surface).maskImage,
@@ -711,6 +718,253 @@ after(async () => {
   }
 });
 
+for (const reduce of [false, true]) {
+  test(`image reveal ${reduce ? "skips the ripple with reduced motion" : "runs one finite ripple"}`, async () => {
+    const page = await getBrowser().newPage({
+      reducedMotion: reduce ? "reduce" : "no-preference",
+    });
+    const issues = watchForBrowserErrors(page);
+    await page.addInitScript(() => {
+      let draws = 0;
+      Object.defineProperty(window, "revealDraws", { get: () => draws });
+      if (typeof GPUQueue !== "undefined") {
+        const submit = GPUQueue.prototype.submit;
+        GPUQueue.prototype.submit = function (commands) {
+          draws++;
+          return submit.call(this, commands);
+        };
+      }
+      const draw = WebGL2RenderingContext.prototype.drawArrays;
+      WebGL2RenderingContext.prototype.drawArrays = function (...args) {
+        draws++;
+        return draw.apply(this, args);
+      };
+    });
+    const readDraws = () =>
+      page.evaluate(() => (window as typeof window & { revealDraws: number }).revealDraws);
+    try {
+      await page.goto(baseUrl);
+      await page.waitForFunction(() => document.documentElement.dataset.processorState === "ready");
+      const fixture = await createCirclePng(page, 360, 480);
+      // Both first upload and replacement must animate once, then stop drawing.
+      for (let upload = 0; upload < 2; upload++) {
+        // oxlint-disable-next-line no-await-in-loop
+        const initialDraws = await readDraws();
+        // oxlint-disable-next-line no-await-in-loop
+        await page.locator('input[type="file"]').setInputFiles({
+          name: `ripple-${upload}.png`,
+          mimeType: "image/png",
+          buffer: fixture,
+        });
+        // oxlint-disable-next-line no-await-in-loop
+        await waitForProcessedImage(page, { width: 360, height: 480 });
+        // oxlint-disable-next-line no-await-in-loop
+        const settled = await readDraws();
+        const count = settled - initialDraws;
+        assert.ok(reduce ? count <= 4 : count > 8, `Unexpected reveal draw count: ${count}`);
+        // oxlint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(200);
+        // oxlint-disable-next-line no-await-in-loop
+        assert.equal(await readDraws(), settled, "Ripple must stop drawing after reveal");
+      }
+      assertNoBrowserErrors(issues);
+    } finally {
+      await page.close();
+    }
+  });
+}
+
+test("DialKit tunes, pauses, replays, and resets the ripple without changing exports", async () => {
+  const page = await getBrowser().newPage({
+    reducedMotion: "no-preference",
+    // Integer preview bounds avoid compositor antialiasing at the screenshot edge.
+    viewport: { width: 1440, height: 1106 },
+  });
+  const issues = watchForBrowserErrors(page);
+  try {
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => document.documentElement.dataset.processorState === "ready");
+    await page.getByRole("button", { name: "Ripple", exact: true }).click();
+    const height = page.getByRole("slider", { name: "Height", exact: true });
+    await height.press("End");
+    assert.equal(Number(await height.getAttribute("aria-valuenow")), 0.8);
+    await page.reload();
+    await page.waitForFunction(() => document.documentElement.dataset.processorState === "ready");
+    await page.getByRole("button", { name: "Ripple", exact: true }).click();
+    assert.equal(Number(await height.getAttribute("aria-valuenow")), 0.8, "Tuning survives reload");
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "dialkit.png",
+      mimeType: "image/png",
+      buffer: await createCirclePng(page, 360, 480),
+    });
+    await waitForProcessedImage(page, { width: 360, height: 480 });
+    const exported = await downloadPixels(page);
+    await page.waitForTimeout(650);
+    const flat = await page.locator("#preview").screenshot();
+    await page.getByRole("button", { name: "Preview", exact: true }).click();
+    await page
+      .getByRole("radiogroup", { name: "Paused", exact: true })
+      .getByRole("radio", { name: "On", exact: true })
+      .click();
+    await page.waitForTimeout(150);
+    const bent = await page.locator("#preview").screenshot();
+    assert.notDeepEqual(bent, flat, "Paused preview must show the wave");
+    assert.equal(await downloadPixels(page), exported, "Paused preview preserves PNG pixels");
+    await page.waitForTimeout(650);
+    assert.deepEqual(
+      await page.locator("#preview").screenshot(),
+      bent,
+      "Export must restore the selected paused frame",
+    );
+    await height.press("Home");
+    await page.waitForTimeout(150);
+    assert.deepEqual(
+      await page.locator("#preview").screenshot(),
+      flat,
+      "Height zero removes the bend live",
+    );
+    assert.equal(await downloadPixels(page), exported, "Tuning leaves PNG pixels unchanged");
+    await page.getByRole("button", { name: "Reset ripple", exact: true }).click();
+    assert.equal(Number(await height.getAttribute("aria-valuenow")), 0.635);
+    const blur = page.getByRole("slider", { name: "Blur Px", exact: true });
+    await blur.press("Home");
+    await page.getByRole("button", { name: "Load impact default", exact: true }).click();
+    assert.equal(Number(await blur.getAttribute("aria-valuenow")), 14);
+    const savedReveal = await page.evaluate(
+      () => JSON.parse(localStorage.getItem("dialkit:lukis")!).values["reveal.transition"],
+    );
+    assert.equal(savedReveal.duration, 1.6, "Optical default restores the approved reveal timing");
+    await page.getByRole("button", { name: "Replay reveal", exact: true }).click();
+    await page.waitForFunction(
+      () => document.querySelector<HTMLButtonElement>("#download")?.disabled,
+    );
+    await waitForProcessedImage(page, { width: 360, height: 480 });
+    assert.equal(await downloadPixels(page), exported, "Replay leaves PNG pixels unchanged");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page
+      .getByRole("radiogroup", { name: "Paused", exact: true })
+      .getByRole("radio", { name: "On", exact: true })
+      .click();
+    await page.waitForTimeout(150);
+    assert.deepEqual(
+      await page.locator("#preview").screenshot(),
+      flat,
+      "Reduced motion skips paused distortion",
+    );
+    assertNoBrowserErrors(issues);
+  } finally {
+    await page.close();
+  }
+});
+
+test("DialKit experiments scrub custom timing and stop looped replay", async () => {
+  const page = await getBrowser().newPage({
+    reducedMotion: "no-preference",
+    viewport: { width: 1440, height: 1100 },
+  });
+  const issues = watchForBrowserErrors(page);
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "dialkit:lukis",
+      JSON.stringify({
+        version: 1,
+        values: {
+          "ripple.timing.startOffsetMs": 200,
+          "ripple.timing.durationMs": 3300,
+          "ripple.loop.gapMs": 100,
+        },
+      }),
+    );
+  });
+  try {
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => document.documentElement.dataset.processorState === "ready");
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "experiment.png",
+      mimeType: "image/png",
+      buffer: await createCirclePng(page, 360, 480),
+    });
+    await waitForProcessedImage(page, { width: 360, height: 480 });
+    const exported = await downloadPixels(page);
+    // Export unlocks the controls before the 600 ms hover geometry finishes.
+    await page.waitForTimeout(650);
+    const flat = await page.locator("#preview").screenshot();
+    await page.getByRole("button", { name: "Ripple", exact: true }).click();
+    await page.getByRole("button", { name: "Timing", exact: true }).click();
+    assert.equal(
+      await page
+        .getByRole("slider", { name: "Damping", exact: true })
+        .getAttribute("aria-valuenow"),
+      "0.2",
+    );
+    assert.equal(
+      await page
+        .getByRole("slider", { name: "Start Offset Ms", exact: true })
+        .getAttribute("aria-valuenow"),
+      "200",
+    );
+    assert.equal(await page.getByRole("button", { name: "Fade", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("slider", { name: "Fade Delay Ms", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("slider", { name: "Reveal Mix", exact: true }).count(), 0);
+    await page.getByRole("button", { name: "Timing", exact: true }).click();
+    await page.getByRole("button", { name: "Appearance", exact: true }).click();
+    await page.getByRole("button", { name: "Preview", exact: true }).click();
+    const paused = page.getByRole("radiogroup", { name: "Paused", exact: true });
+    await paused.getByRole("radio", { name: "On", exact: true }).click();
+    await page
+      .getByRole("radiogroup", { name: "Use Timeline", exact: true })
+      .getByRole("radio", { name: "On", exact: true })
+      .click();
+    await page.waitForTimeout(150);
+    assert.notDeepEqual(
+      await page.locator("#preview").screenshot(),
+      flat,
+      "Scrubbing samples custom travel",
+    );
+    await page.getByRole("slider", { name: "Timeline Progress", exact: true }).press("End");
+    await page.waitForTimeout(150);
+    assert.deepEqual(
+      await page.locator("#preview").screenshot(),
+      flat,
+      "Timeline end restores the flat image",
+    );
+    assert.equal(await downloadPixels(page), exported, "Timeline scrubbing preserves exports");
+    await paused.getByRole("radio", { name: "Off", exact: true }).click();
+    await page.getByRole("button", { name: "Loop", exact: true }).click();
+    const loop = page.getByRole("radiogroup", { name: "Enabled", exact: true });
+    await loop.getByRole("radio", { name: "On", exact: true }).click();
+    await page.waitForFunction(
+      () => document.querySelector<HTMLButtonElement>("#download")?.disabled,
+    );
+    await loop.getByRole("radio", { name: "Off", exact: true }).click();
+    await waitForProcessedImage(page, { width: 360, height: 480 });
+    await page.waitForTimeout(350);
+    assert.ok(
+      await page.locator("#download").isEnabled(),
+      "Disabling Loop prevents another replay",
+    );
+    assert.equal(await downloadPixels(page), exported, "Looped replay preserves exports");
+    await page.evaluate(() => {
+      const original = HTMLCanvasElement.prototype.toBlob;
+      HTMLCanvasElement.prototype.toBlob = function (callback, type, quality) {
+        original.call(this, (blob) => setTimeout(() => callback(blob), 1200), type, quality);
+      };
+    });
+    await loop.getByRole("radio", { name: "On", exact: true }).click();
+    assert.equal(await downloadPixels(page), exported, "Slow export preserves PNG pixels");
+    await page.waitForFunction(
+      () => document.querySelector<HTMLButtonElement>("#download")?.disabled,
+      undefined,
+      { timeout: 2000 },
+    );
+    await loop.getByRole("radio", { name: "Off", exact: true }).click();
+    await waitForProcessedImage(page, { width: 360, height: 480 });
+    assertNoBrowserErrors(issues);
+  } finally {
+    await page.close();
+  }
+});
+
 test("keeps a 1448 by 1086 landscape image undistorted", async () => {
   const page = await getBrowser().newPage({
     reducedMotion: "no-preference",
@@ -735,7 +989,7 @@ test("keeps a 1448 by 1086 landscape image undistorted", async () => {
   }
 });
 
-test("keeps underlying image pixels undistorted during the bounds and reveal overlap", async () => {
+test("keeps revealed image pixels undistorted during the bounds and reveal overlap", async () => {
   const context = await getBrowser().newContext({
     reducedMotion: "no-preference",
     viewport: { width: 1280, height: 960 },
@@ -807,7 +1061,7 @@ test("keeps underlying image pixels undistorted during the bounds and reveal ove
   }
 });
 
-test("reveals without a mask or zoom during bounds overlap", async () => {
+test("reveals without a CSS mask or zoom during bounds overlap", async () => {
   const context = await getBrowser().newContext({
     reducedMotion: "no-preference",
     viewport: { width: 1280, height: 960 },
@@ -932,14 +1186,7 @@ for (const scenario of [
                 const value = {
                   elapsed: now - start,
                   opacity: Number(style.opacity),
-                  progress:
-                    1 -
-                    parseFloat(
-                      getComputedStyle(clip.querySelector(".canvas-surface")!).filter.match(
-                        /blur\(([^)]+)\)/,
-                      )?.[1] ?? "0",
-                    ) /
-                      4,
+                  progress: Number((clip as HTMLElement).dataset.revealProgress ?? 1),
                   filter: getComputedStyle(clip.querySelector(".canvas-surface")!).filter,
                 };
                 frames.push(value);
@@ -967,24 +1214,27 @@ for (const scenario of [
           ),
         );
       } else {
+        assert.ok(
+          samples.every(({ opacity }) => opacity === 1),
+          "The shader mask owns visibility; clip opacity must not weaken the ripple",
+        );
         assert.ok(last.elapsed > 1700 && last.elapsed < 2600, `2s reveal took ${last.elapsed}ms`);
         const middle = samples.find(({ elapsed }) => elapsed >= 900)!;
         assert.ok(middle, "expected an intermediate animation frame");
         if (scenario.name === "shorter reveal") {
-          assert.equal(middle.opacity, 0);
           assert.equal(middle.progress, 0);
           const revealing = samples.find(({ elapsed }) => elapsed >= 1650)!;
           assert.ok(
-            revealing.opacity > 0 && revealing.opacity < 1,
+            revealing.progress > 0 && revealing.progress < 1,
             `short reveal samples: ${JSON.stringify({ first: samples[0], middle, revealing, last })}`,
           );
-          assert.ok(Math.abs(revealing.opacity - revealing.progress) < 0.05);
+          assert.equal(revealing.filter, "blur(0px)", "Localized blur belongs to the shader");
         } else if (scenario.name === "linear")
           assert.ok(
-            middle.opacity > 0.35 && middle.opacity < 0.65,
+            middle.progress > 0.35 && middle.progress < 0.65,
             `linear reveal samples: ${JSON.stringify({ first: samples[0], middle, last })}`,
           );
-        else assert.ok(middle.opacity < 0.3, `late easing was ${middle.opacity} at 900ms`);
+        else assert.ok(middle.progress < 0.3, `late easing was ${middle.progress} at 900ms`);
       }
       assertNoBrowserErrors(issues);
     } finally {
@@ -1560,7 +1810,7 @@ for (const [method, reducedMotion] of [
               loaded: current.width === 64,
             });
             if (current.width === 64 && loadedAt === undefined) loadedAt = performance.now();
-            if (loadedAt !== undefined && performance.now() - loadedAt > 1400) break;
+            if (loadedAt !== undefined && outgoing.width === 0) break;
           }
           return { preservedPixels, preservedAppearance, frames, released: outgoing.width === 0 };
         },

@@ -9,6 +9,7 @@ import "../styles.css";
 <canvas id="reference"></canvas><button id="reference-download">Download reference</button>
 <script>
   import { createImageProcessor } from "../../../../../src/lib/processor";
+  import type { RippleSettings, RippleMotion } from "../../../../../src/lib/processor";
   import { createPainterlyProcessor } from "../../../painterly-reference";
   const canvas = document.querySelector("canvas")!;
   const status = document.querySelector('[role="status"]')!;
@@ -17,6 +18,10 @@ import "../styles.css";
   const reference = createPainterlyProcessor(referenceCanvas);
   // Pixel comparisons use PNG bytes, without triggering browser download limits.
   Object.assign(window, {
+    async presentTestFrame(progress: number, wave = 1, settings?: RippleSettings, motion?: RippleMotion) {
+      await processor.present(progress, wave, settings, motion);
+      return processor.filterPasses;
+    },
     async exportTestPngs() {
       const blob = await processor.exportPng();
       const output = await new Promise<string>((resolve, reject) => {

@@ -3,8 +3,11 @@ import type { Gpu, Surface, Target, Texture } from "vgpu";
 import { canvasToPngBlob, prepareImageBitmap } from "./image";
 import type { ImageDimensions } from "./image";
 import type { ImageProcessor } from "./processor";
+import { DEFAULT_RIPPLE } from "./processor";
+import { defaultRippleMotion } from "./ripple-motion";
 import filterShader from "../shaders/painterly.wgsl?raw";
 import blendShader from "../shaders/blend.wgsl?raw";
+import presentShader from "../shaders/present.wgsl?raw";
 
 interface ImageResources {
   source: Texture;
@@ -55,16 +58,35 @@ export async function createWebGpuProcessor(
     });
     const filter = effect(gpu, filterShader);
     const blend = effect(gpu, blendShader);
-    const present = effect(
-      gpu,
-      `
-    @group(0) @binding(0) var image: texture_2d<f32>;
-    @group(0) @binding(1) var imageSampler: sampler;
-    @fragment fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
-      return textureSampleLevel(image, imageSampler, uv, 0.0);
+    const present = effect(gpu, presentShader, {
+      set: {
+        reveal: {
+          resolution: [1, 1],
+          progress: 1,
+          ...DEFAULT_RIPPLE,
+          ...defaultRippleMotion(1),
+        },
+      },
+    });
+
+    function setPresentation(
+      image: ImageResources,
+      progress = 1,
+      wave = 1,
+      settings = DEFAULT_RIPPLE,
+      motion = defaultRippleMotion(wave, settings, image.dimensions),
+    ) {
+      present.set({
+        image: image.output.color,
+        imageSampler,
+        reveal: {
+          ...settings,
+          ...motion,
+          resolution: [image.dimensions.width, image.dimensions.height],
+          progress,
+        },
+      });
     }
-  `,
-    );
 
     function healthy() {
       if (disposed) throw new Error("The image processor was closed.");
@@ -107,11 +129,11 @@ export async function createWebGpuProcessor(
           canvasSurface = surface(gpu, canvas, {
             size,
             autoResize: false,
-            alphaMode: "opaque",
+            alphaMode: "premultiplied",
             colorSpace: "srgb",
           });
         else canvasSurface.resize(size);
-        present.set({ image: image.output.color, imageSampler });
+        setPresentation(image);
         await frame(gpu, (f) => f.pass(canvasSurface!, present)).done;
       });
     }
@@ -130,7 +152,7 @@ export async function createWebGpuProcessor(
           if (needsFilter) f.pass(image.painted, filter);
           f.pass(image.output, blend);
           if (visible && canvasSurface) {
-            present.set({ image: image.output.color, imageSampler });
+            setPresentation(image);
             f.pass(canvasSurface, present);
           }
         });
@@ -185,7 +207,7 @@ export async function createWebGpuProcessor(
         probeSurface = surface(gpu, document.createElement("canvas"), {
           size: [1, 1],
           autoResize: false,
-          alphaMode: "opaque",
+          alphaMode: "premultiplied",
           colorSpace: "srgb",
         });
         present.set({ image: probeOutput!.color, imageSampler });
@@ -273,6 +295,15 @@ export async function createWebGpuProcessor(
       render(strength, brush) {
         return enqueue(async () => {
           if (current) await draw(current, strength, brush, true);
+        });
+      },
+      present(progress, wave = 1, settings = DEFAULT_RIPPLE, motion) {
+        return enqueue(async () => {
+          if (!current || !canvasSurface) return;
+          await checked(async () => {
+            setPresentation(current!, progress, wave, settings, motion);
+            await frame(gpu, (f) => f.pass(canvasSurface!, present)).done;
+          });
         });
       },
       snapshot(output) {
