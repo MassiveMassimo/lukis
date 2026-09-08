@@ -33,7 +33,25 @@ broadens with travel distance, and loses amplitude through spatial damping.
 There is no separate travel easing, spring handoff, center residual, or fade.
 The wave has a smooth C2 boundary and reaches exact rest before the flat sample.
 Normals drive refraction, neutral area-light reflection, chromatic sampling,
-and localized blur. The origin stays at the center.
+and localized blur. File drops share a captured origin between the mask and wave.
+The drop point is normalized against the drop zone at release and keeps that
+relative image position while the bounds resize. Picker and keyboard uploads use
+the center. Replay keeps the last successful upload's origin; failed replacements
+preserve it. The endpoint uses the farthest corner from that origin.
+
+A broad shadow follows the pointer in light mode; a neutral spotlight replaces
+it in dark mode, including System theme. File drags intensify the effect. Anime.js
+animates its position, scale, and opacity. The light holds at release while the
+image decodes, then contracts and fades when the reveal begins. Reduced motion
+removes tracking lag and transition duration. The overlay never enters PNG exports.
+
+One Anime.js timeline coordinates the light contraction, mask, wave clock, and
+outgoing-image fade after decoding. Shader presentation runs after its children
+update, with at most one GPU frame pending. The mask can finish before the wave;
+the app becomes idle after the timeline and final GPU frame finish. Bounds and
+control-row entrances retain their independent timing. On the first reveal, rows
+are transparent before their container is unhidden, including while the initial
+GPU frame is pending.
 
 The default wave lasts 2.8 s, with 1.2 s bounds and a 1.6 s mask reveal.
 The approved tuning uses Strength 2, Height 0.635, Width 0.33, Broadening 0.036,
@@ -81,7 +99,7 @@ Ripple and leaves Bounds, Reveal, and Sound intact. Edits and saved versions
 continue to persist through DialKit. Removed paths are discarded by its existing
 reconciliation. No storage migration is needed.
 
-Browser tests cover persistence, paused tuning, replay, reset, loop stopping,
+Browser tests cover hover lighting, drop-origin capture, picker fallback, persistence, paused tuning, replay, reset, loop stopping,
 reduced motion, and unchanged exports in both renderers. Unit tests cover the
 approved initial trajectory, duration, offsets, deterministic reverse scrubbing,
 and smooth completion across extreme supported proportions and control ranges.

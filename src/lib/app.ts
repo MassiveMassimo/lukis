@@ -1,9 +1,15 @@
-import { animate, cubicBezier } from "animejs";
+import { animate, createAnimatable, createTimeline, cubicBezier } from "animejs";
 import { play, setEnabled, setVolume } from "cuelume";
 import type { TransitionConfig } from "dialkit/vanilla";
 import type { ImageProcessor } from "./processor";
 import { DEFAULT_RIPPLE } from "./processor";
-import { createRipplePlayback, DEFAULT_RIPPLE_TIMING, type RippleTiming } from "./ripple-motion";
+import {
+  createRipplePlayback,
+  defaultRippleMotion,
+  DEFAULT_RIPPLE_TIMING,
+  type RippleTiming,
+  type RippleOrigin,
+} from "./ripple-motion";
 import type { ImageDimensions } from "./image";
 import { createButtonFeedback } from "./button";
 import { createIconSwap } from "./icon-swap";
@@ -34,6 +40,15 @@ export function mountApp() {
   const dropzone = get<HTMLButtonElement>(".dropzone"),
     clip = get(".canvas-clip"),
     surface = get(".canvas-surface");
+  const dropLightPosition = get(".drop-light-position"),
+    dropLight = get(".drop-light");
+  const lightTracking = createAnimatable(dropLightPosition, {
+    translateX: { unit: "%", duration: 180 },
+    translateY: { unit: "%", duration: 180 },
+    ease: "outQuad",
+  });
+  let lightPoint = { x: 0.5, y: 0.5 };
+  let lightAnimation: ReturnType<typeof animate> | undefined;
   const outgoingBounds = get(".outgoing-bounds"),
     outgoingImage = get(".outgoing-image");
   const messageChrome = get(".message-chrome");
@@ -60,7 +75,8 @@ export function mountApp() {
   const abort = new AbortController(),
     signal = abort.signal;
   const runLatest = createLatestUploadRunner();
-  const animations = new Set<ReturnType<typeof animate>>();
+  const animations = new Set<ReturnType<typeof animate> | ReturnType<typeof createTimeline>>();
+  let revealTimeline: ReturnType<typeof createTimeline> | undefined;
   let processor: ImageProcessor | undefined;
   let processorStarting = true;
   let file: File | null = null,
@@ -81,6 +97,7 @@ export function mountApp() {
   let boundsConfig: TransitionConfig = BOUNDS_TRANSITION,
     revealConfig: TransitionConfig = REVEAL_TRANSITION;
   let rippleSettings = { ...DEFAULT_RIPPLE };
+  let rippleOrigin: RippleOrigin = { x: 0.5, y: 0.5 };
   let rippleTiming: RippleTiming = { ...DEFAULT_RIPPLE_TIMING };
   let rippleLoop = { enabled: false, gapMs: 500 };
   let rippleReplayTimer: ReturnType<typeof setTimeout> | undefined;
@@ -202,6 +219,7 @@ export function mountApp() {
     controls.inert = busy || !revealed || !!fatal;
     paintSlider.setDisabled(busy || !!fatal);
     brushSlider.setDisabled(busy || !!fatal);
+    updateDropLight();
   }
   function showError(message: string, persistent = false) {
     clearTimeout(errorTimer);
@@ -317,7 +335,39 @@ export function mountApp() {
     }
     updateMonochrome();
   }
+  function pointInDropzone(event: MouseEvent): RippleOrigin {
+    const bounds = dropzone.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height)),
+    };
+  }
+  function trackDropLight(event: MouseEvent, immediate = false) {
+    if (busy || fatal || processorStarting) return;
+    lightPoint = pointInDropzone(event);
+    const duration = immediate || reducedMotion() ? 0 : 180;
+    lightTracking.translateX(lightPoint.x * 100, duration);
+    lightTracking.translateY(lightPoint.y * 100, duration);
+  }
+  function updateDropLight() {
+    // Hold the release point while decoding. Contract it when the reveal begins.
+    if (uploading || revealTimeline) return;
+    const visible = !busy && !fatal && !processorStarting && (dragging || hovered);
+    cancel(lightAnimation);
+    let target = { opacity: 0, scale: 0.65, duration: 360 };
+    if (visible) {
+      target = dragging
+        ? { opacity: 1, scale: 1.15, duration: 260 }
+        : { opacity: 0.38, scale: 0.9, duration: 260 };
+    }
+    lightAnimation = motion(dropLight, {
+      ...target,
+      duration: reducedMotion() ? 0 : target.duration,
+      ease: "outCubic",
+    });
+  }
   function updateHover() {
+    updateDropLight();
     const expanded = !busy && (dragging || (!file && hovered));
     cancel(hoverAnimation);
     hoverAnimation = motion(model, {
@@ -381,60 +431,84 @@ export function mountApp() {
       playbackSettings,
       rippleTiming,
       dimensions ?? undefined,
+      rippleOrigin,
     );
     const ripple = { progress: 0, elapsed: 0 };
     clip.dataset.revealProgress = maskedReveal ? "0" : "1";
+    clip.dataset.revealOrigin = `${rippleOrigin.x},${rippleOrigin.y}`;
     if (maskedReveal) await processor!.present(0, 0, rippleSettings);
     if (disposed) return;
-    const maskAnimation = maskedReveal
-      ? motion(ripple, {
-          progress: 1,
-          duration,
-          delay,
-          ease,
-          onUpdate: () => {
-            clip.dataset.revealProgress = String(ripple.progress);
-          },
-        })
-      : undefined;
+    if (maskedReveal) cancel(lightAnimation);
+    else updateDropLight();
     let rippleTask: Promise<void> | undefined;
     let rippleError: unknown;
-    const rippleAnimation = maskedReveal
-      ? motion(ripple, {
-          elapsed: playback.duration,
-          duration: playback.duration,
+    const timeline = createTimeline({
+      autoplay: false,
+      // Render after all children update so mask and wave use the same frame.
+      onRender: () => {
+        if (!maskedReveal || disposed) return;
+        clip.dataset.revealProgress = String(ripple.progress);
+        // Keep at most one GPU frame pending; slow devices skip ahead.
+        if (ripple.elapsed <= 0 || rippleTask || rippleError) return;
+        const sampled = playback.sample(ripple.elapsed);
+        rippleTask = processor!
+          .present(
+            reducedMotion() ? 1 : ripple.progress,
+            reducedMotion() ? 1 : sampled.wave,
+            playbackSettings,
+            reducedMotion() ? undefined : sampled,
+          )
+          .catch((cause) => {
+            rippleError = cause;
+          })
+          .finally(() => {
+            rippleTask = undefined;
+          });
+      },
+      onComplete: (completed) => {
+        animations.delete(completed);
+        revealTimeline = undefined;
+      },
+    });
+    revealTimeline = timeline;
+    if (maskedReveal) {
+      timeline
+        .add(dropLight, { opacity: 0, scale: 0.65, duration: 360, ease: "outCubic" }, 0)
+        .add(ripple, { progress: 1, duration, ease }, delay)
+        .add(
+          ripple,
+          { elapsed: playback.duration, duration: playback.duration, ease: "linear" },
           delay,
-          ease: "linear",
-          onUpdate: () => {
-            // Keep at most one GPU frame pending; slow devices skip ahead.
-            if (rippleTask || rippleError || disposed) return;
-            const sampled = playback.sample(ripple.elapsed);
-            rippleTask = processor!
-              .present(
-                reducedMotion() ? 1 : ripple.progress,
-                reducedMotion() ? 1 : sampled.wave,
-                playbackSettings,
-                reducedMotion() ? undefined : sampled,
-              )
-              .catch((cause) => {
-                rippleError = cause;
-              })
-              .finally(() => {
-                rippleTask = undefined;
-              });
-          },
-        })
-      : undefined;
+        );
+    }
+    if (maskedReveal) clip.style.opacity = "1";
     clip.setAttribute("aria-hidden", "false");
     surface.style.filter = "blur(0px)";
-    motion(outgoingImage, {
-      opacity: 0,
-      filter: reducedMotion() ? "blur(0px)" : "blur(4px)",
-      duration,
+    timeline.add(
+      outgoingImage,
+      {
+        opacity: 0,
+        filter: reducedMotion() ? "blur(0px)" : "blur(4px)",
+        duration,
+        ease,
+        onComplete: clearOutgoing,
+      },
       delay,
-      ease,
-      onComplete: clearOutgoing,
-    });
+    );
+    timeline.add(
+      clip,
+      {
+        opacity: maskedReveal ? [1, 1] : [0, 1],
+        duration,
+        ease,
+        onComplete: () => {
+          if (disposed) return;
+          revealed = hasRevealedImage = true;
+          updateMessage();
+        },
+      },
+      delay,
+    );
     if (!hasRevealedImage)
       rows.forEach((row, index) =>
         motion(row, {
@@ -445,16 +519,13 @@ export function mountApp() {
           ease: HOVER_EASE,
         }),
       );
-    await motion(clip, { opacity: maskedReveal ? [1, 1] : [0, 1], duration, delay, ease });
-    if (disposed) return;
-    revealed = hasRevealedImage = true;
-    updateMessage();
-    await maskAnimation;
-    await rippleAnimation;
+    animations.add(timeline);
+    timeline.play();
+    await timeline;
     await rippleTask;
     if (disposed) return;
     if (rippleError) throw rippleError;
-    if (rippleAnimation) await processor!.present(1);
+    if (maskedReveal) await processor!.present(1);
     busy = false;
     syncBusy();
     updateHover();
@@ -500,24 +571,23 @@ export function mountApp() {
           rippleSettings,
           rippleTiming,
           dimensions ?? undefined,
+          rippleOrigin,
         );
         const elapsed = ripplePreview.timelineProgress * playback.duration;
         const timeline = paused && ripplePreview.useTimeline;
         let progress = 1;
         if (timeline) progress = reveal.ease(duration > 0 ? Math.min(1, elapsed / duration) : 1);
         else if (paused) progress = ripplePreview.revealProgress;
-        const sampled = timeline ? playback.sample(elapsed) : undefined;
+        const wave = paused ? ripplePreview.waveProgress : 1;
+        const sampled = timeline
+          ? playback.sample(elapsed)
+          : defaultRippleMotion(wave, rippleSettings, dimensions ?? undefined, rippleOrigin);
         clip.style.opacity = "1";
         clip.dataset.revealProgress = String(progress);
         surface.style.filter = "blur(0px)";
         // Coalesce slider edits without refiltering or queuing stale frames.
         // oxlint-disable-next-line no-await-in-loop
-        await processor!.present(
-          progress,
-          sampled?.wave ?? (paused ? ripplePreview.waveProgress : 1),
-          rippleSettings,
-          sampled,
-        );
+        await processor!.present(progress, wave, rippleSettings, sampled);
       }
     })()
       .catch((cause) =>
@@ -527,7 +597,7 @@ export function mountApp() {
         ripplePreviewTask = undefined;
       });
   }
-  async function acceptFile(nextFile: File | undefined) {
+  async function acceptFile(nextFile: File | undefined, origin: RippleOrigin = { x: 0.5, y: 0.5 }) {
     if (busy || disposed) return;
     const validation = validateImageFile(nextFile);
     if (validation || !nextFile) {
@@ -563,12 +633,15 @@ export function mountApp() {
         );
         if (!next || !isCurrent()) return;
         file = nextFile;
+        rippleOrigin = origin;
         downloadFeedback.setState("idle");
         copyFeedback.setState("idle");
         dimensions = next;
         uploading = false;
         previewVisible = true;
         frame.dataset.hasFile = "true";
+        // The first reveal awaits a GPU draw before row animations start.
+        if (!hasRevealedImage) rows.forEach((row) => (row.style.opacity = "0"));
         controlsSpace.hidden = false;
         controls.hidden = false;
         dropzone.setAttribute("aria-label", "Replace image");
@@ -637,8 +710,10 @@ export function mountApp() {
   );
   dropzone.addEventListener(
     "pointerenter",
-    () => {
+    (event) => {
+      if (event.pointerType === "touch") return;
       hovered = true;
+      trackDropLight(event, true);
       updateHover();
     },
     { signal },
@@ -652,10 +727,18 @@ export function mountApp() {
     { signal },
   );
   dropzone.addEventListener(
+    "pointermove",
+    (event) => {
+      if (event.pointerType !== "touch") trackDropLight(event);
+    },
+    { signal },
+  );
+  dropzone.addEventListener(
     "dragenter",
     (event) => {
       event.preventDefault();
       if (!busy) {
+        trackDropLight(event, !dragging);
         dragDepth++;
         dragging = true;
         updateHover();
@@ -680,6 +763,7 @@ export function mountApp() {
     (event) => {
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? "none" : "copy";
+      if (dragging) trackDropLight(event);
     },
     { signal },
   );
@@ -689,7 +773,8 @@ export function mountApp() {
       event.preventDefault();
       if (busy) return;
       const next = event.dataTransfer?.files[0];
-      const upload = acceptFile(next);
+      trackDropLight(event, true);
+      const upload = acceptFile(next, pointInDropzone(event));
       dragging = false;
       dragDepth = 0;
       updateHover();
@@ -852,6 +937,10 @@ export function mountApp() {
     "change",
     () => {
       if (reduce.matches) for (const animation of animations) animation.complete();
+      if (reduce.matches) {
+        lightTracking.translateX(lightPoint.x * 100, 0);
+        lightTracking.translateY(lightPoint.y * 100, 0);
+      }
       writeGeometry();
       refreshRipplePreview();
       queueRippleReplay();
@@ -989,6 +1078,7 @@ export function mountApp() {
     if (event.persisted || disposed) return;
     disposed = true;
     abort.abort();
+    lightTracking.revert();
     runLatest.cancel();
     clearTimeout(errorTimer);
     clearTimeout(rippleReplayTimer);

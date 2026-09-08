@@ -19,6 +19,9 @@ import Alert from "@tabler/icons/outline/alert-circle.svg";
           <canvas id="preview" class="absolute inset-0 block size-full min-h-0 min-w-0 object-cover" aria-label="Painterly processed image preview"></canvas>
         </span>
       </span>
+      <span class="drop-light-position pointer-events-none absolute inset-0" aria-hidden="true">
+        <span class="drop-light absolute block"></span>
+      </span>
     </button>
   </div>
   <span class="outgoing-bounds pointer-events-none absolute top-2 left-1/2 z-4 overflow-hidden [transform:translateX(-50%)]" aria-hidden="true">
@@ -44,6 +47,18 @@ import Alert from "@tabler/icons/outline/alert-circle.svg";
     transition: none !important;
   }
   .preview-stage { --empty-width: min(calc(100vw - var(--page-padding) * 2), 56rem); }
+  .drop-light-position { transform: translate(50%, 50%); }
+  .drop-light {
+    width: clamp(320px, 65vw, 720px);
+    aspect-ratio: 1.25;
+    background: radial-gradient(ellipse, rgb(15 23 35 / 0.16), rgb(15 23 35 / 0.07) 32%, transparent 70%);
+    opacity: 0;
+    translate: -50% -50%;
+    transform: scale(0.9);
+  }
+  :global(html.dark) .drop-light {
+    background: radial-gradient(ellipse, rgb(235 242 255 / 0.135), rgb(235 242 255 / 0.05) 32%, transparent 70%);
+  }
   .dropzone-reference {
     mask-image:
       linear-gradient(to right, transparent, black 12%, black 88%, transparent),

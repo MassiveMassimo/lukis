@@ -7,9 +7,15 @@ export const DEFAULT_RIPPLE_TIMING = {
   damping: 0.2,
 };
 export type RippleTiming = typeof DEFAULT_RIPPLE_TIMING;
+export interface RippleOrigin {
+  x: number;
+  y: number;
+}
 export interface RippleMotion {
   distance: number;
   amplitude: number;
+  originX?: number;
+  originY?: number;
 }
 
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
@@ -20,10 +26,19 @@ export function createRipplePlayback(
   settings = DEFAULT_RIPPLE,
   timing = DEFAULT_RIPPLE_TIMING,
   dimensions = { width: 4, height: 3 },
+  origin: RippleOrigin = { x: 0.5, y: 0.5 },
 ) {
+  const originX = clamp(origin.x),
+    originY = clamp(origin.y);
   const shortSide = Math.min(dimensions.width, dimensions.height);
   // Include the normal's finite-difference samples and softened center metric.
-  const corner = Math.hypot(dimensions.width, dimensions.height) / shortSide / 2 + 0.004;
+  const corner =
+    Math.hypot(
+      dimensions.width * Math.max(originX, 1 - originX),
+      dimensions.height * Math.max(originY, 1 - originY),
+    ) /
+      shortSide +
+    0.004;
   const lastEcho = settings.echo > 0 ? (settings.count - 1) * settings.spacing : 0;
   // Compact support ends at three widths. The broader trailing shoulder exits last.
   const exitDistance =
@@ -42,6 +57,8 @@ export function createRipplePlayback(
       const attack = timing.attackMs > 0 ? clamp(age / timing.attackMs) : 1;
       const launch = attack * attack * (3 - 2 * attack);
       return {
+        originX,
+        originY,
         wave: clamp(age / waveDuration),
         distance,
         amplitude:
@@ -57,8 +74,11 @@ export function defaultRippleMotion(
   wave: number,
   settings: RippleSettings = DEFAULT_RIPPLE,
   dimensions = { width: 4, height: 3 },
+  origin: RippleOrigin = { x: 0.5, y: 0.5 },
 ): RippleMotion {
-  const playback = createRipplePlayback(0, settings, DEFAULT_RIPPLE_TIMING, dimensions);
-  const { distance, amplitude } = playback.sample(clamp(wave) * playback.duration);
-  return { distance, amplitude };
+  const playback = createRipplePlayback(0, settings, DEFAULT_RIPPLE_TIMING, dimensions, origin);
+  const { distance, amplitude, originX, originY } = playback.sample(
+    clamp(wave) * playback.duration,
+  );
+  return { distance, amplitude, originX, originY };
 }

@@ -21,6 +21,7 @@ uniform float u_echo;
 uniform float u_distance;
 uniform float u_amplitude;
 uniform float u_blurPx;
+uniform vec2 uOrigin;
 
 // C2 compact support matches the WebGPU wave.
 float compactShoulder(float offset) {
@@ -74,9 +75,9 @@ void main() {
   }
   // Keep these display-only optics in sync with present.wgsl.
   vec2 aspect = uResolution / min(uResolution.x, uResolution.y);
-  vec2 position = (vUv - 0.5) * aspect;
+  vec2 position = (vUv - uOrigin) * aspect;
   float distance = length(position);
-  float maxRadius = length(aspect) * 0.5;
+  float maxRadius = length(max(uOrigin, vec2(1.0) - uOrigin) * aspect);
   float feather = u_feather;
   float radius = mix(-feather, maxRadius + feather, uProgress);
   float alpha = 1.0 - smoothstep(radius - feather, radius + feather, distance);

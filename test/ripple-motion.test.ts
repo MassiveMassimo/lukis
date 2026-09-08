@@ -59,39 +59,56 @@ test("offset, attack and damping remain deterministic during reverse scrubbing",
   );
 });
 
-test("completion waits for the broad trailing shoulder and last echo across aspect ratios", () => {
-  for (const [width, height] of [
-    [4, 3],
-    [3, 4],
-    [1600, 1],
-    [1, 1600],
-    [10, 1],
-    [1, 10],
-    [1, 1],
+test("completion waits for the trailing shoulder and echoes across aspect ratios and origins", () => {
+  for (const origin of [
+    { x: 0.5, y: 0.5 },
+    { x: 0, y: 0 },
+    { x: 1, y: 1 },
+    { x: 0.1, y: 0.85 },
   ]) {
-    for (const waveWidth of [0.05, 0.205, 2]) {
-      for (const broadening of [0, DEFAULT_RIPPLE.broadening, 0.12]) {
-        const settings = {
-          ...DEFAULT_RIPPLE,
-          width: waveWidth,
-          broadening,
-          count: 6,
-          spacing: 1.2,
-        };
-        const playback = createRipplePlayback(1850, settings, DEFAULT_RIPPLE_TIMING, {
-          width,
-          height,
-        });
-        assert.equal(playback.duration, 2800, "Extreme proportions must not lock the app");
-        const { distance } = playback.sample(playback.duration);
-        const sigma = waveWidth + broadening * distance;
-        const lastTrailingCenter = -0.17 + distance - 5 * 1.2 - (0.28 * waveWidth) / 0.205;
-        const corner = Math.hypot(width, height) / Math.min(width, height) / 2;
-        assert.ok(
-          lastTrailingCenter - sigma * 1.62 * 3 > corner + 0.002,
-          "Height and normal samples must leave compact support before the flat fast path",
-        );
-        assert.equal(playback.sample(playback.duration).amplitude, 0);
+    for (const [width, height] of [
+      [4, 3],
+      [3, 4],
+      [1600, 1],
+      [1, 1600],
+      [10, 1],
+      [1, 10],
+      [1, 1],
+    ]) {
+      for (const waveWidth of [0.05, 0.205, 2]) {
+        for (const broadening of [0, DEFAULT_RIPPLE.broadening, 0.12]) {
+          const settings = {
+            ...DEFAULT_RIPPLE,
+            width: waveWidth,
+            broadening,
+            count: 6,
+            spacing: 1.2,
+          };
+          const playback = createRipplePlayback(
+            1850,
+            settings,
+            DEFAULT_RIPPLE_TIMING,
+            {
+              width,
+              height,
+            },
+            origin,
+          );
+          assert.equal(playback.duration, 2800, "Extreme proportions must not lock the app");
+          const { distance } = playback.sample(playback.duration);
+          const sigma = waveWidth + broadening * distance;
+          const lastTrailingCenter = -0.17 + distance - 5 * 1.2 - (0.28 * waveWidth) / 0.205;
+          const corner =
+            Math.hypot(
+              width * Math.max(origin.x, 1 - origin.x),
+              height * Math.max(origin.y, 1 - origin.y),
+            ) / Math.min(width, height);
+          assert.ok(
+            lastTrailingCenter - sigma * 1.62 * 3 > corner + 0.002,
+            "Height and normal samples must leave compact support before the flat fast path",
+          );
+          assert.equal(playback.sample(playback.duration).amplitude, 0);
+        }
       }
     }
   }

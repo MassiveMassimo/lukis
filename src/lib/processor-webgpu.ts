@@ -82,6 +82,8 @@ export async function createWebGpuProcessor(
         reveal: {
           ...settings,
           ...motion,
+          originX: motion.originX ?? 0.5,
+          originY: motion.originY ?? 0.5,
           resolution: [image.dimensions.width, image.dimensions.height],
           progress,
         },

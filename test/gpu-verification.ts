@@ -336,6 +336,78 @@ try {
     ripple[17].changed > 1000,
     "Explicit signed deformation must survive the flat fast path",
   );
+  const originBackdrop = await page.addStyleTag({
+    content: "html, body, canvas { background: transparent !important; }",
+  });
+  for (const [originX, originY] of [
+    [0, 0],
+    [1, 0],
+    [0, 1],
+    [1, 1],
+  ]) {
+    const presentAt = (progress: number, amplitude: number) =>
+      page.evaluate(
+        async (value) => {
+          const fixture = window as typeof window & {
+            presentTestFrame(
+              progress: number,
+              wave: number,
+              settings: RippleSettings,
+              motion: RippleMotion,
+            ): Promise<number>;
+          };
+          return fixture.presentTestFrame(value.progress, 1, value.settings, value.motion);
+        },
+        {
+          progress,
+          settings: DEFAULT_RIPPLE,
+          motion: { distance: 0.7, amplitude, originX, originY },
+        },
+      );
+    assert.equal(await presentAt(0.12, 0.5), 1);
+    const masked = (
+      await page.locator("canvas").first().screenshot({ omitBackground: true })
+    ).toString("base64");
+    const alpha = await page.evaluate(
+      async ({ masked, originX, originY }) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${masked}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d")!;
+        context.drawImage(image, 0, 0);
+        const nearX = Math.round(originX * (canvas.width - 1));
+        const nearY = Math.round(originY * (canvas.height - 1));
+        return {
+          near: context.getImageData(nearX, nearY, 1, 1).data[3],
+          far: context.getImageData(canvas.width - 1 - nearX, canvas.height - 1 - nearY, 1, 1)
+            .data[3],
+        };
+      },
+      { masked, originX, originY },
+    );
+    assert.ok(
+      alpha.near > 128 && alpha.far === 0,
+      "The mask must start at the selected corner, with matching Y orientation in both renderers",
+    );
+    assert.equal(await presentAt(1, 0.5), 1);
+    const bent = (
+      await page.locator("canvas").first().screenshot({ omitBackground: true })
+    ).toString("base64");
+    assert.notEqual(bent, rippleFrames[13].image, "The wave must move with the mask origin");
+    assert.equal(await presentAt(1, 0), 1);
+    const settled = (
+      await page.locator("canvas").first().screenshot({ omitBackground: true })
+    ).toString("base64");
+    assert.equal(
+      settled,
+      rippleFrames[0].image,
+      "Every drop origin must settle to identical flat pixels",
+    );
+  }
+  await originBackdrop.evaluate((element) => element.parentNode?.removeChild(element));
   const strengths = [];
   for (const value of [0, 1]) {
     await page.getByLabel("Paint").fill(String(value));

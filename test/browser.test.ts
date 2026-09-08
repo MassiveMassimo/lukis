@@ -774,6 +774,108 @@ for (const reduce of [false, true]) {
   });
 }
 
+test("drop lighting follows the pointer and reveal origins survive resize, replay, and failed replacement", async () => {
+  const page = await getBrowser().newPage({ colorScheme: "light", reducedMotion: "no-preference" });
+  const issues = watchForBrowserErrors(page);
+  try {
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => document.documentElement.dataset.processorState === "ready");
+    const zone = page.locator(".dropzone");
+    const bounds = (await zone.boundingBox())!;
+    await page.mouse.move(bounds.x + bounds.width * 0.25, bounds.y + bounds.height * 0.3);
+    await page.waitForFunction(
+      () => Number(getComputedStyle(document.querySelector(".drop-light")!).opacity) > 0.3,
+    );
+    const light = await page
+      .locator(".drop-light")
+      .evaluate((el) => getComputedStyle(el).backgroundImage);
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.waitForFunction(() => document.documentElement.classList.contains("dark"));
+    const dark = await page
+      .locator(".drop-light")
+      .evaluate((el) => getComputedStyle(el).backgroundImage);
+    assert.notEqual(light, dark, "System dark mode switches the shadow to a spotlight");
+    await page.mouse.move(5, 5);
+    await page.waitForFunction(
+      () => Number(getComputedStyle(document.querySelector(".drop-light")!).opacity) === 0,
+    );
+    const buffer = await createCirclePng(page, 360, 480);
+    const transfer = await page.evaluateHandle((encoded) => {
+      const data = new DataTransfer();
+      data.items.add(
+        new File([Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0))], "drop.png", {
+          type: "image/png",
+        }),
+      );
+      return data;
+    }, buffer.toString("base64"));
+    await zone.dispatchEvent("dragenter", {
+      dataTransfer: transfer,
+      clientX: bounds.x + 80,
+      clientY: bounds.y + 60,
+    });
+    // Retarget after the fade finishes so opacity cannot mask a tracking race.
+    await page.waitForFunction(
+      () => Number(getComputedStyle(document.querySelector(".drop-light")!).opacity) === 1,
+    );
+    await zone.dispatchEvent("dragover", {
+      dataTransfer: transfer,
+      clientX: bounds.x + 160,
+      clientY: bounds.y + 90,
+    });
+    await page.waitForFunction(() => {
+      const matrix = new DOMMatrix(
+        getComputedStyle(document.querySelector(".drop-light-position")!).transform,
+      );
+      return matrix.e > 120 && matrix.e < 190 && matrix.f > 60 && matrix.f < 120;
+    });
+    const expanded = (await zone.boundingBox())!;
+    await zone.dispatchEvent("drop", {
+      dataTransfer: transfer,
+      clientX: expanded.x + expanded.width * 0.12,
+      clientY: expanded.y + expanded.height * 0.18,
+    });
+    await waitForProcessedImage(page, { width: 360, height: 480 });
+    const origin = await page.locator(".canvas-clip").getAttribute("data-reveal-origin");
+    const [x, y] = origin!.split(",").map(Number);
+    assert.ok(
+      Math.abs(x - 0.12) < 0.005 && Math.abs(y - 0.18) < 0.005,
+      "Drop point remains relative to the resized image",
+    );
+    await page.waitForFunction(
+      () => Number(getComputedStyle(document.querySelector(".drop-light")!).opacity) === 0,
+    );
+    await page.getByRole("button", { name: "Ripple", exact: true }).click();
+    await page.getByRole("button", { name: "Replay reveal", exact: true }).click();
+    await waitForProcessedImage(page, { width: 360, height: 480 });
+    assert.equal(await page.locator(".canvas-clip").getAttribute("data-reveal-origin"), origin);
+    await page.locator("#image-input").setInputFiles({
+      name: "broken.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("invalid image"),
+    });
+    await page.waitForFunction(() =>
+      document.querySelector(".status")?.textContent?.includes("could not be processed"),
+    );
+    assert.equal(await page.locator(".canvas-clip").getAttribute("data-reveal-origin"), origin);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page
+      .locator("#image-input")
+      .setInputFiles({ name: "picker.png", mimeType: "image/png", buffer });
+    await waitForProcessedImage(page, { width: 360, height: 480 });
+    assert.equal(
+      await page.locator(".canvas-clip").getAttribute("data-reveal-origin"),
+      "0.5,0.5",
+      "Picker uploads reset the origin to center",
+    );
+    await transfer.dispose();
+    // The deliberately invalid image is reported through the normal error path.
+    assert.deepEqual(issues.pageErrors, []);
+  } finally {
+    await page.close();
+  }
+});
+
 test("DialKit tunes, pauses, replays, and resets the ripple without changing exports", async () => {
   const page = await getBrowser().newPage({
     reducedMotion: "no-preference",
@@ -1243,7 +1345,7 @@ for (const scenario of [
   });
 }
 
-test("hidden controls cannot focus and sliders preserve pointer ownership", async () => {
+test("hidden controls do not flash or focus and sliders preserve pointer ownership", async () => {
   const context = await getBrowser().newContext({ reducedMotion: "no-preference" });
   await context.addInitScript(() => {
     const values = {
@@ -1258,6 +1360,18 @@ test("hidden controls cannot focus and sliders preserve pointer ownership", asyn
   try {
     await page.goto(baseUrl);
     await page.waitForFunction(() => !!document.documentElement.dataset.processorState);
+    await page.evaluate(() => {
+      const controls = document.querySelector<HTMLElement>(".controls")!;
+      const controlsSpace = document.querySelector<HTMLElement>(".controls-space")!;
+      const observer = new MutationObserver(() => {
+        if (controlsSpace.hidden) return;
+        controls.dataset.initialRowOpacities = JSON.stringify(
+          [...controls.children].map((row) => Number(getComputedStyle(row).opacity)),
+        );
+        observer.disconnect();
+      });
+      observer.observe(controlsSpace, { attributes: true, attributeFilter: ["hidden"] });
+    });
     await page.locator('input[type="file"]').setInputFiles({
       name: "controls.png",
       mimeType: "image/png",
@@ -1273,6 +1387,14 @@ test("hidden controls cannot focus and sliders preserve pointer ownership", asyn
       false,
     );
     await page.waitForFunction(() => !document.querySelector(".controls")?.hasAttribute("inert"));
+    const initialRowOpacities = JSON.parse(
+      (await page.locator(".controls").getAttribute("data-initial-row-opacities"))!,
+    ) as number[];
+    assert.ok(initialRowOpacities.length > 0);
+    assert.ok(
+      initialRowOpacities.every((opacity) => opacity === 0),
+      "Control rows must be transparent when unhidden, before the first reveal GPU frame completes",
+    );
     await paint.focus();
     await paint.press("Home");
     assert.equal(await paint.getAttribute("aria-valuenow"), "0");
@@ -2713,7 +2835,7 @@ test("motion parity: replacement monochrome interpolates and reverses continuous
       };
       const initial = sample();
       const entering: ReturnType<typeof sample>[] = [];
-      dropzone.dispatchEvent(new Event("dragenter", { bubbles: true }));
+      dropzone.dispatchEvent(new DragEvent("dragenter", { bubbles: true }));
       const started = performance.now();
       while (performance.now() - started < 900) {
         // oxlint-disable-next-line no-await-in-loop
@@ -2730,7 +2852,7 @@ test("motion parity: replacement monochrome interpolates and reverses continuous
         leaving.push(sample());
       }
       const restored = sample();
-      dropzone.dispatchEvent(new Event("dragenter", { bubbles: true }));
+      dropzone.dispatchEvent(new DragEvent("dragenter", { bubbles: true }));
       const interruptedAt = performance.now();
       let beforeReversal = sample();
       while (performance.now() - interruptedAt < 600) {

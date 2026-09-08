@@ -225,6 +225,11 @@ export function createWebGlProcessor(
         gl.uniform1f(gl.getUniformLocation(present, `u_${key}`), value);
       gl.uniform1f(gl.getUniformLocation(present, "u_distance"), motion.distance);
       gl.uniform1f(gl.getUniformLocation(present, "u_amplitude"), motion.amplitude);
+      gl.uniform2f(
+        gl.getUniformLocation(present, "uOrigin"),
+        motion.originX ?? 0.5,
+        motion.originY ?? 0.5,
+      );
       // ImageBitmap's first row stays first in the offscreen targets and readback.
       // Only presentation flips it into WebGL's bottom-left canvas coordinates.
       gl.uniform1i(gl.getUniformLocation(present, "uFlipY"), 1);

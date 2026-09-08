@@ -17,6 +17,8 @@ struct Reveal {
   distance: f32,
   amplitude: f32,
   blurPx: f32,
+  originX: f32,
+  originY: f32,
 }
 @group(0) @binding(0) var image: texture_2d<f32>;
 @group(0) @binding(1) var imageSampler: sampler;
@@ -71,11 +73,12 @@ fn samplePainting(uv: vec2f, spread: vec2f) -> vec3f {
   if (reveal.progress >= 1.0 && (reveal.amplitude == 0.0 || reveal.strength <= 0.0 || reveal.height <= 0.0)) {
     return textureSampleLevel(image, imageSampler, uv, 0.0);
   }
-  // The center is fixed. Short-side units keep the broad wave circular.
+  // Short-side units keep the wave circular around the captured drop point.
   let aspect = reveal.resolution / min(reveal.resolution.x, reveal.resolution.y);
-  let position = (uv - 0.5) * aspect;
+  let origin = vec2f(reveal.originX, reveal.originY);
+  let position = (uv - origin) * aspect;
   let distance = length(position);
-  let maxRadius = length(aspect) * 0.5;
+  let maxRadius = length(max(origin, vec2f(1.0) - origin) * aspect);
   let feather = reveal.feather;
   let radius = mix(-feather, maxRadius + feather, reveal.progress);
   let alpha = 1.0 - smoothstep(radius - feather, radius + feather, distance);
